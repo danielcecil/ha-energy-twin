@@ -74,7 +74,7 @@ async def test_setup_entities_and_plan(hass: HomeAssistant):
     # every sensor the dashboard references must exist
     import re, pathlib
     txt = pathlib.Path("dashboard/energy_twin_dashboard.yaml").read_text()
-    for eid in set(re.findall(r"\b((?:sensor|number|select|switch|button)\.home_energy_twin_[a-z_]+)", txt)):
+    for eid in set(re.findall(r"\b((?:sensor|number|select|switch|button|datetime)\.home_energy_twin_[a-z_]+)", txt)):
         assert hass.states.get(eid) is not None, eid
 
 
@@ -133,3 +133,24 @@ async def test_options_flow_menu(hass: HomeAssistant):
     assert r["type"] == "create_entry"
     await hass.async_block_till_done()
     assert hass.config_entries.async_get_entry(entry.entry_id).options["battery_kwh"] == 16
+
+
+async def test_event_form_entities(hass: HomeAssistant):
+    entry = await _setup(hass)
+    c = entry.runtime_data
+    start = (dt_util.utcnow() + timedelta(hours=4)).replace(microsecond=0)
+    await hass.services.async_call("datetime", "set_value", {
+        "entity_id": "datetime.home_energy_twin_event_start", "datetime": start.isoformat()}, blocking=True)
+    await hass.services.async_call("datetime", "set_value", {
+        "entity_id": "datetime.home_energy_twin_event_end", "datetime": (start + timedelta(hours=2)).isoformat()}, blocking=True)
+    await hass.services.async_call("select", "select_option", {
+        "entity_id": "select.home_energy_twin_event_type", "option": "Power Up (charge everything)"}, blocking=True)
+    await hass.services.async_call("number", "set_value", {
+        "entity_id": "number.home_energy_twin_event_rate_override", "value": 2.5}, blocking=True)
+    await hass.services.async_call("button", "press", {"entity_id": "button.home_energy_twin_add_event"}, blocking=True)
+    await hass.async_block_till_done()
+    assert "power_up" in c.plan.slots.event
+    assert c.manual_events[-1].import_p == 2.5 and c.manual_events[-1].export_p is None
+    await hass.services.async_call("button", "press", {"entity_id": "button.home_energy_twin_clear_manual_events"}, blocking=True)
+    await hass.async_block_till_done()
+    assert not c.manual_events

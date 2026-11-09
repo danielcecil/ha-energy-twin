@@ -91,10 +91,12 @@ ENT = {
    "battery_max_kw": "Battery max power", "reserve_pct": "Battery reserve", "export_limit_kw": "Export limit",
    "pv_annual_yield": "Annual yield per kWp", "export_p": "Export rate", "cheap_p": "Cheap import rate",
    "standard_p": "Standard import rate", "pv_cost_per_kwp": "Solar cost per kWp", "battery_cost_per_kwh": "Battery cost per kWh",
-   "power_down_per_month": "Assumed Power Downs per month", "power_up_per_month": "Assumed Power Ups per month"},
- "select": {"strategy": "Strategy", "hardware_preset": "Hardware preset"},
+   "power_down_per_month": "Assumed Power Downs per month", "power_up_per_month": "Assumed Power Ups per month",
+   "event_rate_p": "Event rate override"},
+ "select": {"strategy": "Strategy", "hardware_preset": "Hardware preset", "event_kind": "Event type"},
+ "datetime": {"event_start": "Event start", "event_end": "Event end"},
  "switch": {"arbitrage": "Grid-to-export arbitrage", "allow_battery_export": "Allow battery export"},
- "button": {"recalculate": "Recalculate annual what-if", "run_sweep": "Run size sweep", "reset_twin": "Reset virtual battery"},
+ "button": {"recalculate": "Recalculate annual what-if", "run_sweep": "Run size sweep", "reset_twin": "Reset virtual battery", "add_event": "Add event", "clear_events": "Clear manual events"},
 }
 doc = {
   "config": {"step": steps(["user", "tariff_preset", "sources_live", "sources_octopus", "sources_solar_history"]),

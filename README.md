@@ -29,7 +29,6 @@ runs a **virtual** battery and array alongside your house. It never controls har
    editable later via *Configure*.
 4. Dashboard: paste `dashboard/energy_twin_dashboard.yaml` into a new dashboard's raw editor. Charts
    need [apexcharts-card](https://github.com/RomRider/apexcharts-card) from HACS.
-   Optional: `packages/energy_twin_helpers.yaml` for the manual event form.
 
 ## What to point it at
 

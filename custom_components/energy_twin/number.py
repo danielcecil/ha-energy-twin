@@ -42,7 +42,7 @@ NUMBERS = (
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback) -> None:
-    async_add_entities(TwinNumber(entry.runtime_data, d) for d in NUMBERS)
+    async_add_entities([*(TwinNumber(entry.runtime_data, d) for d in NUMBERS), EventRateNumber(entry.runtime_data)])
 
 
 class TwinNumber(TwinEntity, NumberEntity):
@@ -59,3 +59,23 @@ class TwinNumber(TwinEntity, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         d = self.entity_description
         await self.coordinator.async_set_options({d.option: value}, annual=d.annual)
+
+
+class EventRateNumber(TwinEntity, NumberEntity):
+    """Optional event rate (p/kWh): import rate for Power Up, export rate for Power Down. 0 = use defaults."""
+
+    _attr_translation_key = "event_rate_p"
+    _attr_native_min_value, _attr_native_max_value, _attr_native_step = 0, 500, 0.5
+    _attr_native_unit_of_measurement = "p/kWh"
+    _attr_mode = NumberMode.BOX
+
+    def __init__(self, c) -> None:
+        super().__init__(c, "event_rate_p")
+
+    @property
+    def native_value(self):
+        return self.coordinator.form["rate"]
+
+    async def async_set_native_value(self, value: float) -> None:
+        self.coordinator.form["rate"] = value
+        self.async_write_ha_state()

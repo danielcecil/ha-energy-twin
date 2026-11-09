@@ -415,6 +415,9 @@
       },
       "power_up_per_month": {
         "name": "Assumed Power Ups per month"
+      },
+      "event_rate_p": {
+        "name": "Event rate override"
       }
     },
     "select": {
@@ -423,6 +426,17 @@
       },
       "hardware_preset": {
         "name": "Hardware preset"
+      },
+      "event_kind": {
+        "name": "Event type"
+      }
+    },
+    "datetime": {
+      "event_start": {
+        "name": "Event start"
+      },
+      "event_end": {
+        "name": "Event end"
       }
     },
     "switch": {
@@ -442,6 +456,12 @@
       },
       "reset_twin": {
         "name": "Reset virtual battery"
+      },
+      "add_event": {
+        "name": "Add event"
+      },
+      "clear_events": {
+        "name": "Clear manual events"
       }
     }
   },

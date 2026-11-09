@@ -16,7 +16,7 @@ from .coordinator import TwinCoordinator
 from .sim.models import GridEvent
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [Platform.SENSOR, Platform.NUMBER, Platform.SELECT, Platform.SWITCH, Platform.BUTTON]
+PLATFORMS = [Platform.SENSOR, Platform.NUMBER, Platform.DATETIME, Platform.SELECT, Platform.SWITCH, Platform.BUTTON]
 type TwinConfigEntry = ConfigEntry[TwinCoordinator]
 
 ADD_EVENT_SCHEMA = vol.Schema({

@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -74,6 +75,9 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self._internal_update = False
         self._annual_lock = asyncio.Lock()
         self._live: dict = {}
+        nxt = dt_util.utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        # state of the 'add an event' form on the dashboard
+        self.form: dict = {"kind": "power_down", "start": nxt, "end": nxt + timedelta(hours=1), "rate": 0.0}
 
     # ------------------------------------------------------------------ config accessors
     @property
@@ -152,6 +156,15 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.plan_dirty = True
         self._save()
         await self.async_refresh()
+
+    async def async_add_event_from_form(self) -> None:
+        f = self.form
+        if f["end"] <= f["start"]:
+            raise HomeAssistantError("Event end must be after its start")
+        rate = f["rate"] if f["rate"] and f["rate"] > 0 else None
+        up = f["kind"] == "power_up"
+        await self.async_add_event(GridEvent(f["kind"], f["start"], f["end"], rate if up else None,
+                                             None if up else rate))
 
     async def async_clear_events(self) -> None:
         self.manual_events.clear()

@@ -12,7 +12,7 @@ from .sim.presets import HARDWARE_PRESETS, apply_preset, preset_choices
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback) -> None:
     c = entry.runtime_data
-    async_add_entities([StrategySelect(c), PresetSelect(c)])
+    async_add_entities([StrategySelect(c), PresetSelect(c), EventKindSelect(c)])
 
 
 class StrategySelect(TwinEntity, SelectEntity):
@@ -49,3 +49,23 @@ class PresetSelect(TwinEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         name = self._by_label[option]
         await self.coordinator.async_set_options({CONF_HW_PRESET: name, **apply_preset(HARDWARE_PRESETS, name)})
+
+
+class EventKindSelect(TwinEntity, SelectEntity):
+    """Form field for the dashboard's 'add an event' card."""
+
+    _attr_translation_key = "event_kind"
+    _LABELS = {"power_down": "Power Down (discharge + export)", "power_up": "Power Up (charge everything)"}
+
+    def __init__(self, c) -> None:
+        super().__init__(c, "event_kind")
+        self._by_label = {v: k for k, v in self._LABELS.items()}
+        self._attr_options = list(self._LABELS.values())
+
+    @property
+    def current_option(self):
+        return self._LABELS[self.coordinator.form["kind"]]
+
+    async def async_select_option(self, option: str) -> None:
+        self.coordinator.form["kind"] = self._by_label[option]
+        self.async_write_ha_state()

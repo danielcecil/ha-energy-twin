@@ -220,19 +220,22 @@ views:
     cards:
       - type: markdown
         content: |
-          Events seen from your Octopus entities appear automatically. Use the form below to
-          add one by hand (needs `packages/energy_twin_helpers.yaml`).
+          Events seen from your Octopus entities appear automatically. To add one by hand, fill in
+          the form below and press **Add event**.
 
           **Power Up** = charge everything. **Power Down** = run on battery and export.
+          The rate is optional: for Power Up it overrides the import rate, for Power Down the
+          export rate (0 = use the defaults from the integration's Tariff options).
       - type: entities
         title: Add an event
+        show_header_toggle: false
         entities:
-          - input_select.et_event_kind
-          - input_datetime.et_event_start
-          - input_datetime.et_event_end
-          - input_number.et_event_rate_p
-          - {type: button, name: Add event, action_name: ADD, tap_action: {action: call-service, service: script.et_add_event}}
-          - {type: button, name: Clear manual events, action_name: CLEAR, tap_action: {action: call-service, service: energy_twin.clear_events}}
+          - select.home_energy_twin_event_type
+          - datetime.home_energy_twin_event_start
+          - datetime.home_energy_twin_event_end
+          - number.home_energy_twin_event_rate_override
+          - button.home_energy_twin_add_event
+          - button.home_energy_twin_clear_manual_events
       - type: markdown
         title: Known events
         content: |
