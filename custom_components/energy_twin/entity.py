@@ -18,4 +18,4 @@ class TwinEntity(CoordinatorEntity[TwinCoordinator]):
         self._key = key
         self._attr_unique_id = f"{coordinator.entry.entry_id}_{key}"
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, coordinator.entry.entry_id)},
-                                            name="Home Energy Twin", manufacturer="Community", model="Digital twin")
+                                            name=coordinator.entry.title, manufacturer="Community", model="Digital twin")

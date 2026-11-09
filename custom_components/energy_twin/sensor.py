@@ -67,10 +67,20 @@ def _plan_series(d: dict) -> dict:
 
 def _annual_attrs(d: dict) -> dict:
     a = d.get("annual") or {}
-    return {k: a.get(k) for k in ("monthly", "pv_saving", "battery_saving", "baseline_year1", "scenario_year1",
+    fin = a.get("finance") or {}
+    cum = fin.get("cumulative_by_year") or []
+    sc = d.get("scenario") or {}
+    led = {k: _saving(k)(d) for k in ("day", "month", "total")}
+    cmp = {"scenario": sc.get("name"), "battery_kwh": sc.get("battery_kwh"), "pv_kwp": sc.get("pv_kwp"),
+           "inverter_kw": sc.get("inverter_kw"), "capex": fin.get("capex"), "payback_years": fin.get("payback_years"),
+           "monthly_net_cashflow": fin.get("monthly_net_cashflow"), "npv": fin.get("npv"),
+           "net_5y": cum[4] if len(cum) > 4 else None, "net_10y": cum[9] if len(cum) > 9 else None,
+           "net_20y": cum[19] if len(cum) > 19 else None,
+           "ledger_today": led["day"], "ledger_month": led["month"], "ledger_total": led["total"]}
+    return {**cmp, **{k: a.get(k) for k in ("monthly", "pv_saving", "battery_saving", "baseline_year1", "scenario_year1",
                                   "pv_generation_kwh", "import_kwh", "export_kwh", "grid_charge_kwh",
                                   "battery_export_kwh", "battery_cycles", "strategy", "days_simulated",
-                                  "history_days", "profile")}
+                                  "history_days", "profile")}}
 
 
 SENSORS: tuple[TwinSensorDescription, ...] = (

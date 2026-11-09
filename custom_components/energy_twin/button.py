@@ -20,6 +20,8 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
 class TwinButton(TwinEntity, ButtonEntity):
     def __init__(self, c, key, action) -> None:
         super().__init__(c, key)
+        if key in ("add_event", "clear_events"):
+            self._attr_entity_registry_enabled_default = c.is_primary
         self._attr_translation_key = key
         self._action = action
 

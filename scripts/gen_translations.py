@@ -46,11 +46,13 @@ F = {  # option key -> (label, help)
     "power_down_per_month": ("Assumed Power Downs per month", "For the annual what-if only."), "power_down_start_hour": ("Power Down start hour", ""),
     "power_down_hours": ("Power Down length (h)", ""), "power_up_per_month": ("Assumed Power Ups per month", ""),
     "power_up_start_hour": ("Power Up start hour", ""), "power_up_hours": ("Power Up length (h)", ""),
+    "name": ("Scenario name", "e.g. '16 kWh + 6 kWp'. Each scenario is its own virtual battery, so you can compare setups side by side."),
+    "copy_from": ("Copy settings from", "Optional: start from an existing scenario's entities and settings."),
     "hardware_preset": ("Hardware", "Pick a starting point; every value stays editable afterwards."),
     "tariff_preset": ("Tariff", "Pick a starting point; live rate entities override these."),
 }
 SEC = {
-    "user": ("Choose your hardware", "Pick a preset or Custom. Values are approximate - check datasheets.", ["hardware_preset"]),
+    "user": ("New scenario", "Add one scenario per setup you want to compare.", ["name", "copy_from"]),
     "tariff_preset": ("Choose your tariff", "", ["tariff_preset"]),
     "hardware_preset": ("Hardware preset", "Overwrites the hardware numbers with the preset's values.", ["hardware_preset"]),
     "sources_live": ("Live data", "All optional. The twin works from the tariff and a typical profile without them.",
@@ -99,7 +101,7 @@ ENT = {
  "button": {"recalculate": "Recalculate annual what-if", "run_sweep": "Run size sweep", "reset_twin": "Reset virtual battery", "add_event": "Add event", "clear_events": "Clear manual events"},
 }
 doc = {
-  "config": {"step": steps(["user", "tariff_preset", "sources_live", "sources_octopus", "sources_solar_history"]),
+  "config": {"step": steps(["user", "hardware_preset", "hardware", "tariff_preset", "sources_live", "sources_octopus", "sources_solar_history"]),
              "abort": {"already_configured": "Home Energy Twin is already set up."}},
   "options": {"step": {**steps(), "init": {"title": "Home Energy Twin", "description": "Change any section, then choose Done.",
       "menu_options": {"sources_live": "Live data entities", "sources_octopus": "Octopus entities",
@@ -111,13 +113,13 @@ doc = {
     "add_event": {"name": "Add Power Up / Power Down event", "description": "Tell the twin about an Octopus event window.",
       "fields": {"kind": {"name": "Kind", "description": "power_up or power_down"}, "start": {"name": "Start", "description": ""},
                  "end": {"name": "End", "description": ""}, "import_rate_p": {"name": "Import rate (p/kWh)", "description": "Overrides the default."},
-                 "export_rate_p": {"name": "Export rate (p/kWh)", "description": "Overrides the default."}, "bonus_p": {"name": "Bonus (p/kWh)", "description": "Overrides the default."}}},
-    "clear_events": {"name": "Clear manual events", "description": "Remove events added with add_event."},
+                 "export_rate_p": {"name": "Export rate (p/kWh)", "description": "Overrides the default."}, "scenario": {"name": "Scenario", "description": "Ignored: events are shared by all scenarios"}, "bonus_p": {"name": "Bonus (p/kWh)", "description": "Overrides the default."}}},
+    "clear_events": {"name": "Clear manual events", "description": "Remove events added with add_event.", "fields": {"scenario": {"name": "Scenario", "description": "Ignored: events are shared by all scenarios"}}},
     "run_sweep": {"name": "Run size sweep", "description": "Evaluate combinations of battery size, array size and inverter size over a year.",
       "fields": {"battery_kwh": {"name": "Battery sizes (kWh)", "description": "List, e.g. [0, 5, 10]"}, "pv_kwp": {"name": "Array sizes (kWp)", "description": "List"},
-                 "inverter_kw": {"name": "Inverter sizes (kW)", "description": "Optional list"}, "strategy": {"name": "Strategy", "description": "rules is much faster"}}},
-    "recalculate": {"name": "Recalculate", "description": "Re-run the plan and annual what-if."},
-    "reset_twin": {"name": "Reset twin", "description": "Reset the virtual battery and savings ledger."}},
+                 "inverter_kw": {"name": "Inverter sizes (kW)", "description": "Optional list"}, "scenario": {"name": "Scenario", "description": "Scenario name; blank = default"}, "strategy": {"name": "Strategy", "description": "rules is much faster"}}},
+    "recalculate": {"name": "Recalculate", "description": "Re-run the plan and annual what-if.", "fields": {"scenario": {"name": "Scenario", "description": "Blank = all scenarios"}}},
+    "reset_twin": {"name": "Reset twin", "description": "Reset the virtual battery and savings ledger.", "fields": {"scenario": {"name": "Scenario", "description": "Blank = all scenarios"}}}},
 }
 root = Path(__file__).resolve().parents[1] / "custom_components" / "energy_twin"
 (root / "translations").mkdir(exist_ok=True)

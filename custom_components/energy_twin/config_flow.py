@@ -5,6 +5,7 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
 from homeassistant.helpers import selector as sel
 
@@ -151,10 +152,14 @@ class _FlowBase:
 
 
 class EnergyTwinConfigFlow(_FlowBase, ConfigFlow, domain=DOMAIN):
+    """Each config entry is one *scenario* (a set of kit + prices). Add several to compare setups."""
+
     VERSION = 1
 
     def __init__(self) -> None:
         self.opts: dict = {}
+        self.title = "Home Energy Twin"
+        self.copying = False
 
     @staticmethod
     @callback
@@ -162,9 +167,24 @@ class EnergyTwinConfigFlow(_FlowBase, ConfigFlow, domain=DOMAIN):
         return EnergyTwinOptionsFlow()
 
     async def async_step_user(self, user_input=None) -> ConfigFlowResult:
-        await self.async_set_unique_id(DOMAIN)
-        self._abort_if_unique_id_configured()
-        return await self._preset("user", HARDWARE_PRESETS, CONF_HW_PRESET, user_input, self.async_step_tariff_preset)
+        existing = self._async_current_entries()
+        if user_input is None:
+            default = f"Scenario {len(existing) + 1}" if existing else "Home Energy Twin"
+            fields: dict = {vol.Required(CONF_NAME, default=default): _TEXT}
+            if existing:
+                fields[vol.Optional("copy_from")] = _choice({e.entry_id: e.title for e in existing})
+            return self.async_show_form(step_id="user", data_schema=vol.Schema(fields))
+        self.title = (user_input.get(CONF_NAME) or self.title).strip()
+        if src := self.hass.config_entries.async_get_entry(user_input.get("copy_from") or ""):
+            self.opts, self.copying = dict(src.options), True
+        return await self.async_step_hardware_preset()
+
+    async def async_step_hardware_preset(self, user_input=None) -> ConfigFlowResult:
+        nxt = self.async_step_hardware if self.copying else self.async_step_tariff_preset
+        return await self._preset("hardware_preset", HARDWARE_PRESETS, CONF_HW_PRESET, user_input, nxt)
+
+    async def async_step_hardware(self, user_input=None) -> ConfigFlowResult:
+        return await self._step("hardware", user_input, self._finish)
 
     async def async_step_tariff_preset(self, user_input=None) -> ConfigFlowResult:
         return await self._preset("tariff_preset", TARIFF_PRESETS, CONF_TARIFF_PRESET, user_input,
@@ -180,7 +200,7 @@ class EnergyTwinConfigFlow(_FlowBase, ConfigFlow, domain=DOMAIN):
         return await self._step("sources_solar_history", user_input, self._finish)
 
     async def _finish(self) -> ConfigFlowResult:
-        return self.async_create_entry(title="Home Energy Twin", data={}, options=self.opts)
+        return self.async_create_entry(title=self.title, data={}, options=self.opts)
 
 
 class EnergyTwinOptionsFlow(_FlowBase, OptionsFlow):

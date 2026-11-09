@@ -27,6 +27,7 @@ from .sim.tariff import build_prices, floor_half_hour, make_starts, tod_minutes
 _LOGGER = logging.getLogger(__name__)
 UTC = timezone.utc
 EV_DEFAULT_KW = 7.0          # assumed charger draw in a smart-charge dispatch slot we can't see
+SHARED = "energy_twin_shared"
 MAX_GAP_S = 600              # don't integrate across longer gaps (restart, outage)
 
 
@@ -51,6 +52,10 @@ class Plan:
     notes: dict = field(default_factory=dict)
 
 
+def all_coordinators(hass: HomeAssistant) -> list:
+    return [e.runtime_data for e in hass.config_entries.async_loaded_entries(DOMAIN)]
+
+
 class TwinCoordinator(DataUpdateCoordinator[dict]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=timedelta(seconds=TICK_SECONDS))
@@ -61,7 +66,6 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.last_tick: datetime | None = None
         self.acc: dict = {"day_key": "", "month_key": "", "day": _blank_bucket(), "month": _blank_bucket(),
                           "total": _blank_bucket()}
-        self.manual_events: list[GridEvent] = []
         self.plan: Plan | None = None
         self.plan_dirty = True
         self.annual: dict | None = None
@@ -78,6 +82,16 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         nxt = dt_util.utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         # state of the 'add an event' form on the dashboard
         self.form: dict = {"kind": "power_down", "start": nxt, "end": nxt + timedelta(hours=1), "rate": 0.0}
+
+    @property
+    def manual_events(self) -> list[GridEvent]:
+        """Power Up/Down events are grid-wide, so every scenario shares one list."""
+        return self.hass.data.setdefault(SHARED, {"events": []})["events"]
+
+    @property
+    def is_primary(self) -> bool:
+        entries = self.hass.config_entries.async_entries(DOMAIN)
+        return not entries or entries[0].entry_id == self.entry.entry_id
 
     # ------------------------------------------------------------------ config accessors
     @property
@@ -122,11 +136,12 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.acc = {**self.acc, **saved.get("acc", {})}
         for e in saved.get("events", []):
             try:
-                self.manual_events.append(GridEvent(e["kind"], dt_util.parse_datetime(e["start"]),
-                                                    dt_util.parse_datetime(e["end"]), e.get("import_p"),
-                                                    e.get("export_p"), e.get("bonus_p")))
+                ev = GridEvent(e["kind"], dt_util.parse_datetime(e["start"]), dt_util.parse_datetime(e["end"]),
+                               e.get("import_p"), e.get("export_p"), e.get("bonus_p"))
             except (KeyError, TypeError):
                 continue
+            if not any((m.kind, m.start, m.end) == (ev.kind, ev.start, ev.end) for m in self.manual_events):
+                self.manual_events.append(ev)
         if saved.get("last"):
             self.last_tick = dt_util.parse_datetime(saved["last"])
 
@@ -152,10 +167,16 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         await self.async_refresh()
 
     async def async_add_event(self, ev: GridEvent) -> None:
-        self.manual_events.append(ev)
-        self.plan_dirty = True
-        self._save()
-        await self.async_refresh()
+        if not any((m.kind, m.start, m.end) == (ev.kind, ev.start, ev.end) for m in self.manual_events):
+            self.manual_events.append(ev)
+        await self._refresh_all()
+
+    async def _refresh_all(self) -> None:
+        """An event changes every scenario's plan - refresh them all."""
+        for c in all_coordinators(self.hass):
+            c.plan_dirty = True
+            c._save()
+            await c.async_refresh()
 
     async def async_add_event_from_form(self) -> None:
         f = self.form
@@ -168,9 +189,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
 
     async def async_clear_events(self) -> None:
         self.manual_events.clear()
-        self.plan_dirty = True
-        self._save()
-        await self.async_refresh()
+        await self._refresh_all()
 
     async def async_reset_twin(self) -> None:
         self.soc = self.hardware().emin
@@ -228,7 +247,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         if live_exp is not None and not ev_flag[0]:
             exp[0] = live_exp
 
-        fc = await ha_data.forecast_pv_kw(self.hass, c.get(CONF_FORECAST_ENTRY))
+        fe = c.get(CONF_FORECAST_ENTRY)
+        fc = await ha_data.cached(self.hass, ("fc", fe), 240, lambda: ha_data.forecast_pv_kw(self.hass, fe))
         lat, lon = self.hass.config.latitude, self.hass.config.longitude
         _, synth = synth_pv_unit(starts, lat, lon, hw.pv_annual_yield)
         pv_unit, from_fc = [], 0
@@ -354,6 +374,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         soc = self.soc or 0.0
         out: dict[str, Any] = {
             "live": live,
+            "scenario": {"name": self.entry.title, "battery_kwh": hw.battery_kwh, "pv_kwp": hw.pv_kwp,
+                         "inverter_kw": hw.inverter_kw, "strategy": self.cfg[CONF_STRATEGY]},
             "soc_kwh": round(soc, 2),
             "soc_pct": round(100 * soc / hw.emax, 1) if hw.emax > 0 else 0.0,
             "usable_pct": round(100 * max(0.0, soc - hw.emin) / usable, 1) if hw.emax > 0 else 0.0,
@@ -412,7 +434,9 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         c = self.cfg
         stat = (c.get(CONF_CONSUMPTION_STAT) or "").strip()
         ev_ids = [s.strip() for s in (c.get(CONF_EV_STATS) or "").split(",") if s.strip()]
-        rows = await ha_data.history_hourly(self.hass, ([stat] if stat else []) + ev_ids, int(c[CONF_HISTORY_DAYS]))
+        ids, days = ([stat] if stat else []) + ev_ids, int(c[CONF_HISTORY_DAYS])
+        rows = await ha_data.cached(self.hass, ("hist", tuple(ids), days), 3600,
+                                    lambda: ha_data.history_hourly(self.hass, ids, days))
         total = rows.get(stat) if stat else None
         ev_rows = None
         if ev_ids:

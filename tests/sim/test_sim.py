@@ -146,3 +146,17 @@ def test_sweep_ranks_and_includes_costs():
                         batteries=[0, 5, 10], arrays=[0, 4, 6])
     assert len(rows) == 8
     assert rows == sorted(rows, key=lambda r: r["npv"], reverse=True)
+
+
+def test_cheap_window_charging_is_a_straight_line():
+    from custom_components.energy_twin.sim.engine import plan_dp, pv_series
+    hw = replace(HW, pv_kwp=0, battery_kwh=13.5)
+    sl = year(10)
+    i0 = [i for i in range(sl.n) if sl.tod_min[i] == CHUNK][3]
+    ex = sl.as_expected().view(i0, i0 + 48)
+    plan = plan_dp(ex, hw, Strategy(), hw.emin, [0.0] * 48, load_margin_pct=7.5)
+    block = [plan[t] for t in range(12)]                       # 23:30 -> 05:30
+    assert max(block) - min(block) < 1e-9 and block[0] > 0.5, block
+    # levelling must not change what it costs
+    res = simulate(sl, hw, Strategy(name="optimised"), chunk_tod_min=CHUNK)
+    assert res.saving_gbp > 0

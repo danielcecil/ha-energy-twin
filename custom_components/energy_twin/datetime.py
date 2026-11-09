@@ -20,6 +20,7 @@ class EventTime(TwinEntity, DateTimeEntity):
         super().__init__(c, key)
         self._attr_translation_key = key
         self._field = field
+        self._attr_entity_registry_enabled_default = c.is_primary
 
     @property
     def native_value(self) -> datetime:

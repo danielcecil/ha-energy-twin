@@ -2,13 +2,15 @@
   "config": {
     "step": {
       "user": {
-        "title": "Choose your hardware",
-        "description": "Pick a preset or Custom. Values are approximate - check datasheets.",
+        "title": "New scenario",
+        "description": "Add one scenario per setup you want to compare.",
         "data": {
-          "hardware_preset": "Hardware"
+          "name": "Scenario name",
+          "copy_from": "Copy settings from"
         },
         "data_description": {
-          "hardware_preset": "Pick a starting point; every value stays editable afterwards."
+          "name": "e.g. '16 kWh + 6 kWp'. Each scenario is its own virtual battery, so you can compare setups side by side.",
+          "copy_from": "Optional: start from an existing scenario's entities and settings."
         }
       },
       "tariff_preset": {
@@ -18,6 +20,16 @@
         },
         "data_description": {
           "tariff_preset": "Pick a starting point; live rate entities override these."
+        }
+      },
+      "hardware_preset": {
+        "title": "Hardware preset",
+        "description": "Overwrites the hardware numbers with the preset's values.",
+        "data": {
+          "hardware_preset": "Hardware"
+        },
+        "data_description": {
+          "hardware_preset": "Pick a starting point; every value stays editable afterwards."
         }
       },
       "sources_live": {
@@ -71,6 +83,29 @@
           "consumption_stat": "Long-term statistic id for whole-home import kWh (an energy sensor, or e.g. octopus_energy:electricity_<serial>_<mpan>_import_consumption - see Developer tools > Statistics).",
           "ev_stats": "Comma-separated statistic ids for your chargers' kWh. If blank, off-peak demand above the night base load is assumed to be the cars."
         }
+      },
+      "hardware": {
+        "title": "Solar & battery",
+        "data": {
+          "pv_kwp": "Solar array (kWp)",
+          "inverter_kw": "Inverter AC rating (kW)",
+          "pv_annual_yield": "Annual yield (kWh per kWp)",
+          "battery_kwh": "Battery usable capacity (kWh)",
+          "battery_max_kw": "Battery max charge/discharge (kW)",
+          "round_trip_eff": "Round-trip efficiency (0-1)",
+          "reserve_pct": "Reserve (%)",
+          "export_limit_kw": "Export limit (kW)",
+          "cycle_cost_p": "Wear cost (p per kWh discharged)"
+        },
+        "data_description": {
+          "pv_kwp": "0 = no solar.",
+          "inverter_kw": "Clips solar and caps battery power (hybrid inverter assumption).",
+          "pv_annual_yield": "From PVGIS or your installer for your roof. UK south-facing is ~900-1000.",
+          "battery_kwh": "0 = no battery.",
+          "reserve_pct": "Never discharged below this.",
+          "export_limit_kw": "3.68 kW is the G98 single-phase default.",
+          "cycle_cost_p": "Optional. Makes the planner avoid low-value cycling."
+        }
       }
     },
     "abort": {
@@ -80,13 +115,15 @@
   "options": {
     "step": {
       "user": {
-        "title": "Choose your hardware",
-        "description": "Pick a preset or Custom. Values are approximate - check datasheets.",
+        "title": "New scenario",
+        "description": "Add one scenario per setup you want to compare.",
         "data": {
-          "hardware_preset": "Hardware"
+          "name": "Scenario name",
+          "copy_from": "Copy settings from"
         },
         "data_description": {
-          "hardware_preset": "Pick a starting point; every value stays editable afterwards."
+          "name": "e.g. '16 kWh + 6 kWp'. Each scenario is its own virtual battery, so you can compare setups side by side.",
+          "copy_from": "Optional: start from an existing scenario's entities and settings."
         }
       },
       "tariff_preset": {
@@ -490,6 +527,10 @@
           "name": "Export rate (p/kWh)",
           "description": "Overrides the default."
         },
+        "scenario": {
+          "name": "Scenario",
+          "description": "Ignored: events are shared by all scenarios"
+        },
         "bonus_p": {
           "name": "Bonus (p/kWh)",
           "description": "Overrides the default."
@@ -498,7 +539,13 @@
     },
     "clear_events": {
       "name": "Clear manual events",
-      "description": "Remove events added with add_event."
+      "description": "Remove events added with add_event.",
+      "fields": {
+        "scenario": {
+          "name": "Scenario",
+          "description": "Ignored: events are shared by all scenarios"
+        }
+      }
     },
     "run_sweep": {
       "name": "Run size sweep",
@@ -516,6 +563,10 @@
           "name": "Inverter sizes (kW)",
           "description": "Optional list"
         },
+        "scenario": {
+          "name": "Scenario",
+          "description": "Scenario name; blank = default"
+        },
         "strategy": {
           "name": "Strategy",
           "description": "rules is much faster"
@@ -524,11 +575,23 @@
     },
     "recalculate": {
       "name": "Recalculate",
-      "description": "Re-run the plan and annual what-if."
+      "description": "Re-run the plan and annual what-if.",
+      "fields": {
+        "scenario": {
+          "name": "Scenario",
+          "description": "Blank = all scenarios"
+        }
+      }
     },
     "reset_twin": {
       "name": "Reset twin",
-      "description": "Reset the virtual battery and savings ledger."
+      "description": "Reset the virtual battery and savings ledger.",
+      "fields": {
+        "scenario": {
+          "name": "Scenario",
+          "description": "Blank = all scenarios"
+        }
+      }
     }
   }
 }

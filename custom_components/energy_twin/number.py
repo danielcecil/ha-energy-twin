@@ -71,6 +71,7 @@ class EventRateNumber(TwinEntity, NumberEntity):
 
     def __init__(self, c) -> None:
         super().__init__(c, "event_rate_p")
+        self._attr_entity_registry_enabled_default = c.is_primary
 
     @property
     def native_value(self):

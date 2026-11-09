@@ -172,6 +172,32 @@ def plan_dp(sl: Slots, hw: Hardware, st: Strategy, soc0: float, pv: list[float],
         j = int(pol[t, i])
         out.append(float(r[i, j]))
         i = j
+    return level_charging(out, sl)
+
+
+def level_charging(r: list[float], sl: Slots) -> list[float]:
+    """Spread each cheap block's charge evenly (a straight line, not an arbitrary lumpy split).
+
+    Slots in a cheap block share one price, so every split costs the same; the DP just picks one
+    arbitrarily (and its power steps are quantised). Averaging over a run of non-discharging cheap
+    slots keeps total energy, cost and the final SoC identical, lowers peak grid draw and is
+    gentler on the battery. Intermediate SoC stays between the run's start and end values.
+    """
+    out, n, i = list(r), len(r), 0
+    while i < n:
+        if sl.cheap[i] and not sl.event[i] and r[i] > -1e-9:
+            j = i
+            while (j + 1 < n and sl.cheap[j + 1] and not sl.event[j + 1] and r[j + 1] > -1e-9
+                   and sl.import_p[j + 1] == sl.import_p[i]):
+                j += 1
+            seg = r[i:j + 1]
+            if sum(1 for x in seg if x > 1e-6):                 # something is being charged
+                avg = sum(seg) / len(seg)
+                for k in range(i, j + 1):
+                    out[k] = avg
+            i = j + 1
+        else:
+            i += 1
     return out
 
 

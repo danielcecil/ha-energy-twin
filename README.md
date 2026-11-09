@@ -30,6 +30,16 @@ runs a **virtual** battery and array alongside your house. It never controls har
 4. Dashboard: paste `dashboard/energy_twin_dashboard.yaml` into a new dashboard's raw editor. Charts
    need [apexcharts-card](https://github.com/RomRider/apexcharts-card) from HACS.
 
+## Compare several setups
+
+Each config entry is a **scenario**: its own kit, strategy, costs, device and virtual battery, all
+fed by the same real load, prices, forecast and Power Up/Down events. Add as many as you like
+(Settings -> Devices & services -> Home Energy Twin -> *Add entry*), choosing *Copy settings from*
+to reuse your entities. The dashboard's **Compare** tab finds every scenario automatically and ranks
+them by NPV with a live "saved so far" ledger. Power Up/Down events are shared across scenarios;
+Octopus/forecast/history lookups are cached and shared. Per-scenario tabs show one scenario -
+`python scripts/gen_dashboard.py <entity_prefix> "<title>"` makes one for another.
+
 ## What to point it at
 
 | Setting | Use |
@@ -65,7 +75,8 @@ and edit. UK variants can differ from other markets.
 ## Services
 
 `energy_twin.add_event`, `clear_events`, `run_sweep` (lists of `battery_kwh`, `pv_kwp`,
-`inverter_kw`; `strategy: rules|optimised`), `recalculate`, `reset_twin`.
+`inverter_kw`; `strategy: rules|optimised`), `recalculate`, `reset_twin`. `scenario` (name) targets one
+scenario; events always apply to all.
 
 ## Honest limitations - please read
 

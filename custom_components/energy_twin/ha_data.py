@@ -6,7 +6,9 @@ unrecognised is ignored and shown in the diagnostics sensor, never raised.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -196,3 +198,18 @@ async def history_hourly(hass: HomeAssistant, stat_ids: list[str], days: int) ->
                 series.append((s, float(r["change"])))
         out[sid] = series
     return out
+
+
+_CACHE = "energy_twin_cache"
+
+
+async def cached(hass: HomeAssistant, key: tuple, ttl: float, factory):
+    """Share an expensive lookup (forecast, statistics) between scenarios for `ttl` seconds."""
+    store = hass.data.setdefault(_CACHE, {})
+    ent = store.setdefault(key, {"t": None, "v": None, "lock": asyncio.Lock()})
+    async with ent["lock"]:
+        now = time.monotonic()
+        if ent["t"] is None or now - ent["t"] > ttl:
+            ent["v"] = await factory()
+            ent["t"] = now
+        return ent["v"]

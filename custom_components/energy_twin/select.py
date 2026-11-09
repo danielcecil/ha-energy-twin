@@ -59,6 +59,7 @@ class EventKindSelect(TwinEntity, SelectEntity):
 
     def __init__(self, c) -> None:
         super().__init__(c, "event_kind")
+        self._attr_entity_registry_enabled_default = c.is_primary
         self._by_label = {v: k for k, v in self._LABELS.items()}
         self._attr_options = list(self._LABELS.values())
 

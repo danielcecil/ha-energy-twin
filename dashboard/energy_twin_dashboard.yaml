@@ -1,8 +1,56 @@
 # Home Energy Twin dashboard.
 # Paste into: Settings > Dashboards > (new dashboard) > Raw configuration editor.
+# Per-scenario tabs show ONE scenario: run scripts/gen_dashboard.py <entity-prefix> to make one for another.
 # Charts need "apexcharts-card" from HACS (Frontend). Everything else is core cards.
 title: Energy Twin
 views:
+  # ───────────────────────────── COMPARE SCENARIOS ─────────────────────────────
+  # Auto-discovers every Home Energy Twin scenario - nothing to edit when you add one.
+  - title: Compare
+    path: compare
+    icon: mdi:scale-balance
+    cards:
+      - type: markdown
+        title: Scenarios ranked by net present value
+        content: |
+          {% set ns = namespace(rows=[]) %}
+          {% for e in integration_entities('energy_twin') | select('match', 'sensor\\..*_annual_saving$') | list %}
+          {% set ns.rows = ns.rows + [dict(
+            name=state_attr(e, 'scenario') or e,
+            kwh=state_attr(e, 'battery_kwh'), kwp=state_attr(e, 'pv_kwp'), inv=state_attr(e, 'inverter_kw'),
+            capex=state_attr(e, 'capex') | float(0), saving=states(e) | float(0),
+            payback=state_attr(e, 'payback_years'), net=state_attr(e, 'monthly_net_cashflow') | float(0),
+            npv=state_attr(e, 'npv') | float(0), n10=state_attr(e, 'net_10y') | float(0),
+            month=state_attr(e, 'ledger_month'), total=state_attr(e, 'ledger_total')
+          )] %}
+          {% endfor %}
+          {% if ns.rows %}
+          | Scenario | kWh | kWp | Inv kW | Outlay | Saving/yr | Payback | Net/month | 10-yr net | NPV |
+          |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+          {% for r in ns.rows | sort(attribute='npv', reverse=true) -%}
+          | **{{ r.name }}** | {{ r.kwh }} | {{ r.kwp }} | {{ r.inv }} | £{{ r.capex | round(0) }} | £{{ r.saving | round(0) }} | {{ r.payback or '—' }} y | £{{ r.net | round(0) }} | £{{ r.n10 | round(0) }} | £{{ r.npv | round(0) }} |
+          {% endfor %}
+          {% else %}No scenarios calculated yet - the yearly model takes a few seconds after start-up.{% endif %}
+      - type: markdown
+        title: What each would have saved you so far (live ledger)
+        content: |
+          {% set ns = namespace(rows=[]) %}
+          {% for e in integration_entities('energy_twin') | select('match', 'sensor\\..*_annual_saving$') | list %}
+          {% set ns.rows = ns.rows + [dict(name=state_attr(e, 'scenario') or e, month=state_attr(e, 'ledger_month') | float(0), total=state_attr(e, 'ledger_total') | float(0))] %}
+          {% endfor %}
+          | Scenario | This month | Since started |
+          |---|--:|--:|
+          {% for r in ns.rows | sort(attribute='total', reverse=true) -%}
+          | **{{ r.name }}** | £{{ r.month }} | £{{ r.total }} |
+          {% endfor %}
+
+          All scenarios see the same real load, prices, forecast and Power Up/Down events,
+          so differences are down purely to the kit and strategy.
+      - type: markdown
+        content: |
+          **Add a scenario:** Settings → Devices & services → Home Energy Twin → *Add entry*.
+          Give it a name and choose *Copy settings from* to reuse your entities, then pick a hardware preset.
+
   # ───────────────────────────── 1. LIVE TWIN ─────────────────────────────
   - title: Live twin
     path: live

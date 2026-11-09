@@ -24,6 +24,8 @@ def _rates(now, cheap_p=0.07, std_p=0.27):
 async def test_config_flow_with_preset(hass: HomeAssistant):
     r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     assert r["type"] == "form" and r["step_id"] == "user"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"name": "Home Energy Twin"})
+    assert r["step_id"] == "hardware_preset"
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {"hardware_preset": "tesla_powerwall_3"})
     assert r["step_id"] == "tariff_preset"
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {"tariff_preset": "intelligent_go"})
@@ -37,7 +39,7 @@ async def test_config_flow_with_preset(hass: HomeAssistant):
     assert r["options"]["battery_kwh"] == 13.5 and r["options"]["power_entity"] == "sensor.mini"
 
 
-async def _setup(hass, **extra):
+async def _setup(hass, title="Home Energy Twin", **extra):
     hass.config.time_zone = "Europe/London"
     hass.config.latitude, hass.config.longitude = 52.5, -1.5
     await hass.config.async_update(time_zone="Europe/London")
@@ -45,7 +47,7 @@ async def _setup(hass, **extra):
     hass.states.async_set("sensor.fc_now", "2.5", {"unit_of_measurement": "kW"})
     hass.states.async_set("sensor.price", "27.5", {"unit_of_measurement": "p/kWh"})
     hass.states.async_set("event.rates", "x", {"rates": _rates(None)})
-    entry = MockConfigEntry(domain=DOMAIN, options={
+    entry = MockConfigEntry(domain=DOMAIN, title=title, options={
         "power_entity": "sensor.mini", "pv_now_entity": "sensor.fc_now", "import_now_entity": "sensor.price",
         "import_rates_entities": ["event.rates"], "forecast_ref_kwp": 5.0,
         "battery_kwh": 13.5, "pv_kwp": 6.0, **extra})
@@ -154,3 +156,56 @@ async def test_event_form_entities(hass: HomeAssistant):
     await hass.services.async_call("button", "press", {"entity_id": "button.home_energy_twin_clear_manual_events"}, blocking=True)
     await hass.async_block_till_done()
     assert not c.manual_events
+
+
+async def test_multiple_scenarios(hass: HomeAssistant):
+    a = await _setup(hass, strategy="rules")
+    b = await _setup(hass, title="Big battery", strategy="rules", battery_kwh=20, pv_kwp=8)
+    assert a.entry_id != b.entry_id and a.runtime_data is not b.runtime_data
+    # independent devices / entities per scenario
+    assert hass.states.get("sensor.home_energy_twin_battery_state_of_charge") is not None
+    assert hass.states.get("sensor.big_battery_battery_state_of_charge") is not None
+    # form entities exist only for the primary scenario
+    assert hass.states.get("select.home_energy_twin_event_type") is not None
+    assert hass.states.get("select.big_battery_event_type") is None
+    # independent virtual batteries and hardware
+    assert b.runtime_data.hardware().battery_kwh == 20 and a.runtime_data.hardware().battery_kwh == 13.5
+    await a.runtime_data._async_annual()
+    await b.runtime_data._async_annual()
+    sa = hass.states.get("sensor.home_energy_twin_annual_saving")
+    sb = hass.states.get("sensor.big_battery_annual_saving")
+    assert sa.attributes["scenario"] == "Home Energy Twin" and sb.attributes["scenario"] == "Big battery"
+    assert sb.attributes["battery_kwh"] == 20 and float(sb.state) != float(sa.state)
+    # a grid event added once reaches BOTH scenarios' plans
+    now = dt_util.utcnow()
+    await hass.services.async_call(DOMAIN, "add_event", {
+        "kind": "power_down", "start": (now + timedelta(hours=3)).isoformat(),
+        "end": (now + timedelta(hours=4)).isoformat()}, blocking=True)
+    await hass.async_block_till_done()
+    assert "power_down" in a.runtime_data.plan.slots.event and "power_down" in b.runtime_data.plan.slots.event
+    # the dashboard's Compare tab discovers both scenarios and renders a table
+    import pathlib, yaml
+    from homeassistant.helpers.template import Template
+    dash = yaml.safe_load(pathlib.Path("dashboard/energy_twin_dashboard.yaml").read_text())
+    cards = next(v for v in dash["views"] if v["path"] == "compare")["cards"]
+    out = Template(cards[0]["content"], hass).async_render()
+    assert "**Big battery**" in out and "**Home Energy Twin**" in out
+    rows = [l for l in out.splitlines() if l.startswith("| **")]
+    assert len(rows) == 2
+    # targeted service
+    await hass.services.async_call(DOMAIN, "reset_twin", {"scenario": "Big battery"}, blocking=True)
+
+
+async def test_config_flow_copy_from_existing(hass: HomeAssistant):
+    a = await _setup(hass)
+    r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    assert r["step_id"] == "user"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"name": "Scenario 2", "copy_from": a.entry_id})
+    assert r["step_id"] == "hardware_preset"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"hardware_preset": "sigenstor_5kw_16kwh"})
+    assert r["step_id"] == "hardware"          # copying skips entity pages, goes straight to tweak the kit
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {
+        "pv_kwp": 6, "inverter_kw": 5, "pv_annual_yield": 950, "battery_kwh": 16, "battery_max_kw": 5,
+        "round_trip_eff": 0.9, "reserve_pct": 10, "export_limit_kw": 3.68, "cycle_cost_p": 0})
+    assert r["type"] == "create_entry" and r["title"] == "Scenario 2"
+    assert r["options"]["power_entity"] == "sensor.mini" and r["options"]["battery_kwh"] == 16
