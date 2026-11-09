@@ -9,7 +9,7 @@ views:
     icon: mdi:home-lightning-bolt
     cards:
       - type: markdown
-        content: >
+        content: |
           ## Virtual battery: **{{ states('sensor.home_energy_twin_twin_mode') }}**
 
           This is a *simulation* of the kit you configured, stepped against your real
@@ -164,7 +164,7 @@ views:
           - {type: tile, entity: sensor.home_energy_twin_monthly_net_cashflow, name: Net / month}
       - type: markdown
         title: Cash vs finance
-        content: >
+        content: |
           {% set s = 'sensor.home_energy_twin_' %}
           | | |
           |---|---|
@@ -181,7 +181,7 @@ views:
           {{ state_attr(s ~ 'annual_saving', 'profile') }}.*
       - type: markdown
         title: Month by month (baseline vs with kit)
-        content: >
+        content: |
           {% set m = state_attr('sensor.home_energy_twin_annual_saving', 'monthly') %}
           {% if m %}
           | Month | Without | With | **Saved** |
@@ -202,7 +202,7 @@ views:
           - {entity: sensor.home_energy_twin_best_sweep_result, name: Best by NPV}
       - type: markdown
         title: Ranked by net present value
-        content: >
+        content: |
           {% set rows = state_attr('sensor.home_energy_twin_best_sweep_result', 'rows') %}
           {% if rows %}
           | kWp | kWh | Inv kW | Outlay | Saving/yr | Payback | Net/month | NPV |
@@ -219,7 +219,7 @@ views:
     icon: mdi:flash-alert
     cards:
       - type: markdown
-        content: >
+        content: |
           Events seen from your Octopus entities appear automatically. Use the form below to
           add one by hand (needs `packages/energy_twin_helpers.yaml`).
 
@@ -235,7 +235,7 @@ views:
           - {type: button, name: Clear manual events, action_name: CLEAR, tap_action: {action: call-service, service: energy_twin.clear_events}}
       - type: markdown
         title: Known events
-        content: >
+        content: |
           {% set ev = state_attr('sensor.home_energy_twin_next_power_event', 'events') %}
           {% if ev %}{% for e in ev -%}
           - **{{ e.kind }}** {{ as_timestamp(e.start) | timestamp_custom('%a %d %b %H:%M') }} → {{ as_timestamp(e.end) | timestamp_custom('%H:%M') }}
@@ -247,7 +247,7 @@ views:
     icon: mdi:stethoscope
     cards:
       - type: markdown
-        content: >
+        content: |
           {% set d = state_attr('sensor.home_energy_twin_diagnostics', 'diagnostics') %}
           {% if d %}{% for k, v in d.items() -%}
           - **{{ k }}**: {{ v }}
