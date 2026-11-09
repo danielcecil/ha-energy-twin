@@ -164,6 +164,7 @@ views:
           - {entity: sensor.home_energy_twin_planned_battery_export, name: Planned export from battery}
           - {entity: sensor.home_energy_twin_plan_saving_next_day, name: Plan saving vs no kit}
           - {entity: sensor.home_energy_twin_next_power_event, name: Next Power Up/Down}
+          - {entity: sensor.home_energy_twin_ev_charging_expected_tonight, name: EV charging expected tonight}
 
   # ───────────────────────────── 2. WHAT-IF ─────────────────────────────
   - title: What-if
@@ -307,6 +308,19 @@ views:
           If *import_rate_slots* is 0, check the Octopus rate entities selected in the
           integration's options. If *forecast_slots_used* is 0, the solar forecast entry is
           missing and a synthetic seasonal curve is being used.
+      - type: markdown
+        title: Vehicles (what the twin understood)
+        content: |
+          {% set vs = state_attr('sensor.home_energy_twin_ev_charging_expected_tonight', 'vehicles') %}
+          {% if vs %}
+          | Car | Mode | Plugged | Home | SoC | Needs | Chance | Expected tonight | Learned session |
+          |---|---|---|---|--:|--:|--:|--:|--:|
+          {% for v in vs -%}
+          | **{{ v.vehicle }}** | {{ v.mode }} | {{ v.plugged }} ({{ v.raw_plug_state }}) | {{ v.home }} ({{ v.raw_home_state }}) | {{ v.soc_pct if v.soc_pct is not none else '—' }} | {{ v.needed_kwh }} kWh | {{ (v.probability * 100) | round(0) }}% | {{ v.expected_kwh_tonight }} kWh | {{ v.session_kwh_learned }} kWh ({{ v.learned_sessions }} seen) |
+          {% endfor %}
+          *Plugged/Home show what was understood and, in brackets, the raw entity state. If a value is `None`, the state
+          wasn't recognised - set the override in the vehicle's options.*
+          {% else %}No vehicles configured - add them under Configure → Vehicles.{% endif %}
       - type: entities
         entities:
           - {entity: button.home_energy_twin_reset_virtual_battery, name: Reset virtual battery & ledger}

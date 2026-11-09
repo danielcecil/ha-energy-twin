@@ -67,6 +67,22 @@ SEC = {
     "assumptions": ("Assumptions", "", ["night_base_load_kw", "default_daily_house_kwh", "default_daily_ev_kwh", "power_down_per_month", "power_down_start_hour", "power_down_hours", "power_up_per_month", "power_up_start_hour", "power_up_hours"]),
 }
 
+VF = {  # vehicle form fields
+    "name": ("Vehicle name", "e.g. 'Tesla' - used to label the car in the dashboard."),
+    "mode": ("How it charges", "Only one car per account is usually on Intelligent Octopus Go. The other charges on the off-peak schedule."),
+    "power_entity": ("Charging power sensor", "Optional. W or kW from the car or charger integration. Lets the twin see real charging and learn session sizes."),
+    "plug_entity": ("Plugged-in entity", "Optional. A binary sensor, or a charging-status sensor - states like on/off, connected/disconnected, charging, stopped are understood."),
+    "home_entity": ("At-home entity", "Optional. A device tracker / person / binary sensor. Any zone other than 'home' counts as away."),
+    "soc_entity": ("Battery level entity (%)", "Optional. With it the twin knows exactly how much the car still needs."),
+    "capacity_kwh": ("Battery size (kWh)", ""), "target_soc_pct": ("Charge target (%)", ""),
+    "charger_kw": ("Charger power (kW)", ""),
+    "session_kwh": ("Typical energy per charge (kWh)", "0 = learn it from observed sessions. Used when the car has no battery-level entity."),
+    "energy_stat": ("Energy statistic id", "Optional. Long-term kWh statistic of this car's charging, so the twin can learn its pattern from history straight away."),
+    "plug_states": ("Plugged-in states (override)", "Only if your integration uses unusual wording. Comma-separated, e.g. 'ready,charging'. Blank = auto-detect."),
+    "home_states": ("At-home states (override)", "Comma-separated, e.g. 'home,garage'. Blank = auto-detect."),
+}
+
+
 def steps(keys=None):
     out = {}
     for sid, (title, desc, ks) in SEC.items():
@@ -77,13 +93,22 @@ def steps(keys=None):
                     "data_description": {k: F[k][1] for k in ks if F[k][1]}}
     return out
 
+def vsteps():
+    return {
+      "vehicles": {"title": "Vehicles", "description": "Model each car separately so charging is predicted from whether it is plugged in, at home or dispatched - not averaged over every night.\n\nCurrent vehicles:\n{vehicles}",
+                   "menu_options": {"vehicle_add": "Add a vehicle", "vehicle_edit": "Edit a vehicle", "vehicle_remove": "Remove a vehicle", "init": "Back"}},
+      "vehicle_add": {"title": "Vehicle", "data": {k: v[0] for k, v in VF.items()}, "data_description": {k: v[1] for k, v in VF.items() if v[1]}},
+      "vehicle_edit": {"title": "Edit which vehicle?", "data": {"name": "Vehicle"}},
+      "vehicle_remove": {"title": "Remove which vehicle?", "data": {"name": "Vehicle"}},
+    }
+
 ENT = {
  "sensor": {"soc": "Battery state of charge", "stored_energy": "Battery stored energy", "battery_power": "Battery power",
    "grid_power": "Grid power", "solar_power": "Solar power", "house_load": "House load", "mode": "Twin mode",
    "import_price": "Import price", "export_price": "Export price", "saving_today": "Saving today",
    "saving_month": "Saving this month", "saving_total": "Saving total", "cost_today_actual": "Cost today (actual)",
    "cost_today_twin": "Cost today (twin)", "solar_today": "Solar generated today", "export_today": "Exported today",
-   "plan_target_soc": "Planned overnight charge target", "plan_battery_export": "Planned battery export",
+   "ev_tonight": "EV charging expected tonight", "plan_target_soc": "Planned overnight charge target", "plan_battery_export": "Planned battery export",
    "plan_saving": "Plan saving (next day)", "annual_saving": "Annual saving", "annual_pv_saving": "Annual saving from solar",
    "annual_battery_saving": "Annual saving from battery", "payback_years": "Payback", "capex": "Outlay",
    "monthly_net_cashflow": "Monthly net cashflow", "monthly_payment": "Monthly finance payment",
@@ -103,9 +128,9 @@ ENT = {
 doc = {
   "config": {"step": steps(["user", "hardware_preset", "hardware", "tariff_preset", "sources_live", "sources_octopus", "sources_solar_history"]),
              "abort": {"already_configured": "Home Energy Twin is already set up."}},
-  "options": {"step": {**steps(), "init": {"title": "Home Energy Twin", "description": "Change any section, then choose Done.",
+  "options": {"step": {**steps(), **vsteps(), "init": {"title": "Home Energy Twin", "description": "Change any section, then choose Done.",
       "menu_options": {"sources_live": "Live data entities", "sources_octopus": "Octopus entities",
-        "sources_solar_history": "Solar forecast & history", "hardware_preset": "Apply a hardware preset",
+        "sources_solar_history": "Solar forecast & history", "vehicles": "Vehicles (EV charging)", "hardware_preset": "Apply a hardware preset",
         "hardware": "Solar & battery", "tariff_preset": "Apply a tariff preset", "tariff": "Tariff",
         "finance": "Costs & finance", "strategy": "Strategy", "assumptions": "Assumptions", "done": "Save and finish"}}}},
   "entity": {p: {k: {"name": v} for k, v in d.items()} for p, d in ENT.items()},

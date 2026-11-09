@@ -20,6 +20,7 @@ CONF_FORECAST_REF_KWP = "forecast_ref_kwp"            # kWp that forecast integr
 CONF_CONSUMPTION_STAT = "consumption_stat"            # whole-home import statistic id
 CONF_EV_STATS = "ev_stats"                            # comma separated EV energy statistic ids
 CONF_HISTORY_DAYS = "history_days"
+CONF_VEHICLES = "vehicles"                            # list of per-car dicts (see sim/ev.py Vehicle)
 
 # ---- presets -------------------------------------------------------------------------------
 CONF_HW_PRESET = "hardware_preset"

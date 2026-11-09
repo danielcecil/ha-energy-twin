@@ -130,6 +130,10 @@ SENSORS: tuple[TwinSensorDescription, ...] = (
     TwinSensorDescription(key="export_today", translation_key="export_today",
                           native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, device_class=SensorDeviceClass.ENERGY,
                           value_fn=lambda d: _r(_g("acc", "day", "export_kwh")(d))),
+    TwinSensorDescription(key="ev_tonight", translation_key="ev_tonight",
+                          native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, device_class=SensorDeviceClass.ENERGY,
+                          value_fn=_g("ev", "tonight_kwh"),
+                          attr_fn=lambda d: {"vehicles": (d.get("ev") or {}).get("vehicles", [])}),
     # ---- plan
     TwinSensorDescription(key="plan_target_soc", translation_key="plan_target_soc", native_unit_of_measurement=PERCENTAGE,
                           value_fn=_g("plan", "target_soc_pct"), attr_fn=_plan_series),

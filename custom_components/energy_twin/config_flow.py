@@ -100,7 +100,24 @@ STEPS: dict[str, list[tuple[str, Any, bool]]] = {
         (CONF_PU_HOURS, _num(0.5, 12, 0.5, "h"), True),
     ],
 }
-MENU = ["sources_live", "sources_octopus", "sources_solar_history", "hardware_preset", "hardware", "tariff_preset",
+VEHICLE_MODES = {"iog": "Intelligent Octopus Go (smart-charged, dispatch slots)", "offpeak": "Off-peak schedule only"}
+# key, selector, required, default
+VEHICLE_FIELDS: list[tuple[str, Any, bool, Any]] = [
+    ("name", _TEXT, True, ""),
+    ("mode", _choice(VEHICLE_MODES), True, "offpeak"),
+    ("power_entity", _ent(), False, None),
+    ("plug_entity", _ent(), False, None),
+    ("home_entity", _ent(), False, None),
+    ("soc_entity", _ent(), False, None),
+    ("capacity_kwh", _num(10, 200, 0.5, "kWh"), True, 60.0),
+    ("target_soc_pct", _num(10, 100, 1, "%"), True, 80.0),
+    ("charger_kw", _num(1.4, 22, 0.1, "kW"), True, 7.0),
+    ("session_kwh", _num(0, 150, 0.5, "kWh"), True, 0.0),
+    ("energy_stat", _TEXT, False, None),
+    ("plug_states", _TEXT, False, None),
+    ("home_states", _TEXT, False, None),
+]
+MENU = ["sources_live", "sources_octopus", "sources_solar_history", "vehicles", "hardware_preset", "hardware", "tariff_preset",
         "tariff", "finance", "strategy", "assumptions", "done"]
 
 
@@ -222,6 +239,54 @@ class EnergyTwinOptionsFlow(_FlowBase, OptionsFlow):
 
     async def async_step_tariff_preset(self, user_input=None) -> ConfigFlowResult:
         return await self._preset("tariff_preset", TARIFF_PRESETS, CONF_TARIFF_PRESET, user_input, self._back)
+
+    # ---- vehicles -----------------------------------------------------------------------------
+    def _vehicles(self) -> list[dict]:
+        return list(self.opts.get(CONF_VEHICLES) or [])
+
+    async def async_step_vehicles(self, user_input=None) -> ConfigFlowResult:
+        vs = self._vehicles()
+        listing = "\n".join(f"- {v['name']} ({VEHICLE_MODES.get(v.get('mode'), v.get('mode'))})" for v in vs) or "None yet."
+        options = ["vehicle_add"] + (["vehicle_edit", "vehicle_remove"] if vs else []) + ["init"]
+        return self.async_show_menu(step_id="vehicles", menu_options=options,
+                                    description_placeholders={"vehicles": listing})
+
+    async def async_step_vehicle_edit(self, user_input=None) -> ConfigFlowResult:
+        names = [v["name"] for v in self._vehicles()]
+        if user_input is None:
+            return self.async_show_form(step_id="vehicle_edit", data_schema=vol.Schema(
+                {vol.Required("name"): _choice({n: n for n in names})}))
+        self._editing = user_input["name"]
+        return await self.async_step_vehicle_add()
+
+    async def async_step_vehicle_add(self, user_input=None) -> ConfigFlowResult:
+        editing = getattr(self, "_editing", None)
+        cur = next((v for v in self._vehicles() if v["name"] == editing), {}) if editing else {}
+        if user_input is None:
+            fields: dict = {}
+            for key, selector, required, default in VEHICLE_FIELDS:
+                val = cur.get(key, default)
+                kw: dict = {}
+                if required and val not in (None, ""):
+                    kw["default"] = val
+                elif not required and val not in (None, ""):
+                    kw["description"] = {"suggested_value": val}
+                fields[(vol.Required if required else vol.Optional)(key, **kw)] = selector
+            return self.async_show_form(step_id="vehicle_add", data_schema=vol.Schema(fields))
+        veh = {k: v for k, v in user_input.items() if v not in (None, "")}
+        veh["name"] = veh["name"].strip()
+        vs = [v for v in self._vehicles() if v["name"] not in (editing, veh["name"])]
+        self.opts[CONF_VEHICLES] = vs + [veh]
+        self._editing = None
+        return await self.async_step_vehicles()
+
+    async def async_step_vehicle_remove(self, user_input=None) -> ConfigFlowResult:
+        names = [v["name"] for v in self._vehicles()]
+        if user_input is None:
+            return self.async_show_form(step_id="vehicle_remove", data_schema=vol.Schema(
+                {vol.Required("name"): _choice({n: n for n in names})}))
+        self.opts[CONF_VEHICLES] = [v for v in self._vehicles() if v["name"] != user_input["name"]]
+        return await self.async_step_vehicles()
 
     async def async_step_done(self, user_input=None) -> ConfigFlowResult:
         return self.async_create_entry(title="", data=self.opts)

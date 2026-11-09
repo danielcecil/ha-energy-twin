@@ -30,6 +30,27 @@ runs a **virtual** battery and array alongside your house. It never controls har
 4. Dashboard: paste `dashboard/energy_twin_dashboard.yaml` into a new dashboard's raw editor. Charts
    need [apexcharts-card](https://github.com/RomRider/apexcharts-card) from HACS.
 
+## Cars (EV charging)
+
+Cars are modelled **individually**, not as an averaged nightly load. In *Configure -> Vehicles* add
+each car with whatever entities its integration offers - all optional:
+
+| Entity | Used for |
+|---|---|
+| Charging power sensor (W/kW) | real charging; learning session sizes |
+| Plugged-in entity | binary sensor *or* a status sensor (`connected`, `charging`, `stopped`, `Disconnected`...) |
+| At-home entity | device tracker / person / binary sensor (any zone other than `home` = away) |
+| Battery level % | exact energy still needed (target SoC and battery size set per car) |
+| Energy statistic | learn the pattern from history straight away |
+
+Each car is either **IOG** (smart-charged: charges in Octopus dispatch slots at any time of day, plus the
+off-peak window) or **off-peak** (only the off-peak window, from its start). One IOG car and one
+schedule-only car is the normal two-car setup. A car that is plugged in at home *will* charge; one that
+isn't only contributes a learned probability for that weekday, so non-charging days no longer smear into
+the plan. Learning only happens around real sessions (energy delivered, plug-in days). Integrations word
+their states differently, so there are optional "plugged-in states" / "at-home states" overrides, and the
+Diagnostics tab shows, per car, what was understood and from which raw state.
+
 ## Compare several setups
 
 Each config entry is a **scenario**: its own kit, strategy, costs, device and virtual battery, all

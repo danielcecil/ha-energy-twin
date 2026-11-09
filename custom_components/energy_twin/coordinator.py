@@ -17,7 +17,7 @@ from homeassistant.util import dt as dt_util
 
 from . import ha_data
 from .const import *  # noqa: F403 - constants module is the single source of config keys
-from .sim import load, pipeline
+from .sim import ev as evm, load, pipeline
 from .sim.engine import _slot_cost, follow, plan_horizon, pv_series, settle
 from .sim.finance import Costs, FinanceTerms
 from .sim.models import EV_ON_KW, SLOT_H, GridEvent, Hardware, Slots, Strategy, TariffConfig
@@ -79,6 +79,10 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self._internal_update = False
         self._annual_lock = asyncio.Lock()
         self._live: dict = {}
+        self.learn_live: dict[str, evm.VehicleLearn] = {}      # sessions/plug-ins observed by this twin
+        self.learn_hist: dict[str, evm.VehicleLearn] = {}      # mined from recorder statistics
+        self.veh_rt: dict[str, dict] = {}                      # per-car session tracking
+        self.ev_info: dict = {}
         nxt = dt_util.utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         # state of the 'add an event' form on the dashboard
         self.form: dict = {"kind": "power_down", "start": nxt, "end": nxt + timedelta(hours=1), "rate": 0.0}
@@ -92,6 +96,55 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
     def is_primary(self) -> bool:
         entries = self.hass.config_entries.async_entries(DOMAIN)
         return not entries or entries[0].entry_id == self.entry.entry_id
+
+    @property
+    def vehicles(self) -> list[evm.Vehicle]:
+        out = []
+        for d in self.cfg.get(CONF_VEHICLES) or []:
+            try:
+                out.append(evm.Vehicle.from_dict(d))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return out
+
+    def learn_for(self, name: str) -> evm.VehicleLearn:
+        return evm.VehicleLearn.combine(self.learn_hist.get(name, evm.VehicleLearn()),
+                                        self.learn_live.get(name, evm.VehicleLearn()))
+
+    def vehicle_info(self, v: evm.Vehicle) -> evm.VehicleInfo:
+        plug, home = self._state(v.plug_entity), self._state(v.home_entity)
+        soc = ha_data.to_float(self._state(v.soc_entity))
+        live = ha_data.power_kw(self._state(v.power_entity)) or 0.0
+        rt = self.veh_rt.get(v.name, {})
+        return evm.VehicleInfo(
+            plugged=evm.interpret_plugged(plug.state if plug else None, v.plug_states),
+            home=evm.interpret_home(home.state if home else None, v.home_states),
+            soc_pct=soc, live_kw=live, delivered_kwh=rt.get("delivered", 0.0),
+            raw_plug=plug.state if plug else None, raw_home=home.state if home else None)
+
+    def _track_vehicles(self, now: datetime, h: float) -> None:
+        """Learn only around real sessions: energy delivered while a car draws power, plug-in days."""
+        today = now.astimezone(self.tz).date()
+        for v in self.vehicles:
+            rt = self.veh_rt.setdefault(v.name, {"delivered": 0.0, "last": None, "day": today.isoformat(),
+                                                 "plugged_today": False})
+            lrn = self.learn_live.setdefault(v.name, evm.VehicleLearn())
+            info = self.vehicle_info(v)
+            if rt["day"] != today.isoformat():                       # day rolled: record yesterday's plug-in
+                y = date.fromisoformat(rt["day"])
+                lrn.note_day(y.weekday(), rt["plugged_today"])
+                rt["day"], rt["plugged_today"] = today.isoformat(), False
+            if info.plugged and info.home is not False:
+                rt["plugged_today"] = True
+            if info.live_kw >= 0.3 and h > 0:
+                rt["delivered"] += info.live_kw * h
+                rt["last"] = now.isoformat()
+                rt["plugged_today"] = True
+            last = dt_util.parse_datetime(rt["last"]) if rt.get("last") else None
+            idle = last is not None and (now - last) > timedelta(hours=3)
+            if rt["delivered"] > 0 and (idle or info.plugged is False):    # session over
+                lrn.end_session(rt["delivered"])
+                rt["delivered"], rt["last"] = 0.0, None
 
     # ------------------------------------------------------------------ config accessors
     @property
@@ -134,6 +187,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         hw = self.hardware()
         self.soc = saved.get("soc", hw.emin)
         self.acc = {**self.acc, **saved.get("acc", {})}
+        self.learn_live = {k: evm.VehicleLearn.from_dict(v) for k, v in (saved.get("learn") or {}).items()}
+        self.veh_rt = saved.get("veh_rt") or {}
         for e in saved.get("events", []):
             try:
                 ev = GridEvent(e["kind"], dt_util.parse_datetime(e["start"]), dt_util.parse_datetime(e["end"]),
@@ -148,6 +203,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
     def _save(self) -> None:
         self._store.async_delay_save(lambda: {
             "soc": self.soc, "last": self.last_tick.isoformat() if self.last_tick else None, "acc": self.acc,
+            "learn": {k: v.to_dict() for k, v in self.learn_live.items()}, "veh_rt": self.veh_rt,
             "events": [{"kind": e.kind, "start": e.start.isoformat(), "end": e.end.isoformat(), "import_p": e.import_p,
                         "export_p": e.export_p, "bonus_p": e.bonus_p} for e in self.manual_events]}, 30)
 
@@ -262,17 +318,26 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         if live_pv is not None:
             pv_unit[0] = self._scale_pv(live_pv)
 
-        house, evk = [], []
         disp_slots = {floor_half_hour(a) + timedelta(minutes=30 * k)
                       for a, b in dispatches for k in range(max(1, int((b - a).total_seconds() // 1800)))}
+        house = []
         for i, s in enumerate(starts):
             loc = s.astimezone(self.tz)
-            slot = tod[i] // 30
-            house.append(self.profile.house(loc.date(), slot) * load.SEASONAL[loc.month - 1])
-            e = self.profile.ev[slot]
-            if s in disp_slots and e < EV_ON_KW:
-                e = EV_DEFAULT_KW
-            evk.append(e)
+            house.append(self.profile.house(loc.date(), tod[i] // 30) * load.SEASONAL[loc.month - 1])
+        vehicles = self.vehicles
+        if vehicles:
+            # per-car model: charge what is plugged in / dispatched; only probabilities for cars that aren't
+            infos = {v.name: self.vehicle_info(v) for v in vehicles}
+            evk, self.ev_info = evm.build_ev_load(starts, tod, self.tz, tariff, vehicles, infos,
+                                                  {v.name: self.learn_for(v.name) for v in vehicles}, disp_slots)
+        else:                                  # legacy: smoothed average profile
+            evk = []
+            for i, s in enumerate(starts):
+                e = self.profile.ev[tod[i] // 30]
+                if s in disp_slots and e < EV_ON_KW:
+                    e = EV_DEFAULT_KW
+                evk.append(e)
+            self.ev_info = []
         sl = Slots(starts, tod, imp, exp, cheap, ev_flag, bonus, list(house), list(evk), pv_unit,
                    list(house), list(evk), list(pv_unit), [""] * len(starts))
         hw_soc = self.soc if self.soc is not None else hw.emin
@@ -284,6 +349,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "load_profile": f"{self.profile.source} ({self.profile.days} days)",
             "horizon_slots": len(starts), "live_price_entity": live_imp is not None,
             "live_pv_entity": live_pv is not None,
+            "vehicles": self.ev_info,
         }
         return Plan(sl, res, now, hw_soc)
 
@@ -317,7 +383,9 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         c, sl, plan = self.cfg, self.plan.slots, self.plan.result
         pv_plan = pv_series(sl.pv_unit, hw)
         total = ha_data.power_kw(self._state(c.get(CONF_POWER_ENTITY)))
-        ev_states = [ha_data.power_kw(s) for s in self._states(c.get(CONF_EV_POWER_ENTITIES))]
+        veh = self.vehicles
+        ev_states = ([self.vehicle_info(v).live_kw for v in veh if v.power_entity] if veh else []) or \
+                    [ha_data.power_kw(s) for s in self._states(c.get(CONF_EV_POWER_ENTITIES))]
         ev = sum(v for v in ev_states if v) if ev_states else (sl.ev_kw[idx] if total is None else 0.0)
         house = max(0.0, total - ev) if total is not None else sl.house_kw[idx]
         pv = pv_plan[idx]
@@ -325,6 +393,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         r_req = follow(r_plan, sl, idx, house, ev, pv, sl.exp_house_kw[idx], pv_plan[idx])
         dt_s = (now - self.last_tick).total_seconds() if self.last_tick else 0.0
         self.last_tick = now
+        self._track_vehicles(now, dt_s / 3600.0 if 0 < dt_s <= MAX_GAP_S else 0.0)
         soc_before = self.soc
         self.soc, r = settle(hw, self.soc, r_req if hw.battery_kwh > 0 else 0.0, ev >= EV_ON_KW,
                              hw.discharge_cap(pv))
@@ -376,6 +445,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "live": live,
             "scenario": {"name": self.entry.title, "battery_kwh": hw.battery_kwh, "pv_kwp": hw.pv_kwp,
                          "inverter_kw": hw.inverter_kw, "strategy": self.cfg[CONF_STRATEGY]},
+            "ev": {"tonight_kwh": round(sum(n.get("expected_kwh_tonight", 0) for n in (self.ev_info or [])), 1),
+                   "vehicles": self.ev_info or []},
             "soc_kwh": round(soc, 2),
             "soc_pct": round(100 * soc / hw.emax, 1) if hw.emax > 0 else 0.0,
             "usable_pct": round(100 * max(0.0, soc - hw.emin) / usable, 1) if hw.emax > 0 else 0.0,
@@ -434,10 +505,14 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         c = self.cfg
         stat = (c.get(CONF_CONSUMPTION_STAT) or "").strip()
         ev_ids = [s.strip() for s in (c.get(CONF_EV_STATS) or "").split(",") if s.strip()]
+        veh_stats = {v.name: v.energy_stat for v in self.vehicles if v.energy_stat}
+        ev_ids = list(dict.fromkeys(ev_ids + list(veh_stats.values())))
         ids, days = ([stat] if stat else []) + ev_ids, int(c[CONF_HISTORY_DAYS])
         rows = await ha_data.cached(self.hass, ("hist", tuple(ids), days), 3600,
                                     lambda: ha_data.history_hourly(self.hass, ids, days))
         total = rows.get(stat) if stat else None
+        self.learn_hist = {n: evm.learn_from_rows(rows.get(sid, []), self.tz) for n, sid in veh_stats.items()
+                           if rows.get(sid)}
         ev_rows = None
         if ev_ids:
             merged: dict[datetime, float] = {}
@@ -458,6 +533,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         return pipeline.make_year(
             prof, hh, he, days, last, hw=hw, tariff=tariff, tz=self.tz, lat=self.hass.config.latitude,
             lon=self.hass.config.longitude, today=dt_util.now().date(),
+            vehicles=self.vehicles or None, learns={v.name: self.learn_for(v.name) for v in self.vehicles},
             pd=(c[CONF_PD_PER_MONTH], c[CONF_PD_START_HOUR], c[CONF_PD_HOURS]),
             pu=(c[CONF_PU_PER_MONTH], c[CONF_PU_START_HOUR], c[CONF_PU_HOURS]))
 

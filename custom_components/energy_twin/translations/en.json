@@ -295,6 +295,58 @@
           "power_down_per_month": "For the annual what-if only."
         }
       },
+      "vehicles": {
+        "title": "Vehicles",
+        "description": "Model each car separately so charging is predicted from whether it is plugged in, at home or dispatched - not averaged over every night.\n\nCurrent vehicles:\n{vehicles}",
+        "menu_options": {
+          "vehicle_add": "Add a vehicle",
+          "vehicle_edit": "Edit a vehicle",
+          "vehicle_remove": "Remove a vehicle",
+          "init": "Back"
+        }
+      },
+      "vehicle_add": {
+        "title": "Vehicle",
+        "data": {
+          "name": "Vehicle name",
+          "mode": "How it charges",
+          "power_entity": "Charging power sensor",
+          "plug_entity": "Plugged-in entity",
+          "home_entity": "At-home entity",
+          "soc_entity": "Battery level entity (%)",
+          "capacity_kwh": "Battery size (kWh)",
+          "target_soc_pct": "Charge target (%)",
+          "charger_kw": "Charger power (kW)",
+          "session_kwh": "Typical energy per charge (kWh)",
+          "energy_stat": "Energy statistic id",
+          "plug_states": "Plugged-in states (override)",
+          "home_states": "At-home states (override)"
+        },
+        "data_description": {
+          "name": "e.g. 'Tesla' - used to label the car in the dashboard.",
+          "mode": "Only one car per account is usually on Intelligent Octopus Go. The other charges on the off-peak schedule.",
+          "power_entity": "Optional. W or kW from the car or charger integration. Lets the twin see real charging and learn session sizes.",
+          "plug_entity": "Optional. A binary sensor, or a charging-status sensor - states like on/off, connected/disconnected, charging, stopped are understood.",
+          "home_entity": "Optional. A device tracker / person / binary sensor. Any zone other than 'home' counts as away.",
+          "soc_entity": "Optional. With it the twin knows exactly how much the car still needs.",
+          "session_kwh": "0 = learn it from observed sessions. Used when the car has no battery-level entity.",
+          "energy_stat": "Optional. Long-term kWh statistic of this car's charging, so the twin can learn its pattern from history straight away.",
+          "plug_states": "Only if your integration uses unusual wording. Comma-separated, e.g. 'ready,charging'. Blank = auto-detect.",
+          "home_states": "Comma-separated, e.g. 'home,garage'. Blank = auto-detect."
+        }
+      },
+      "vehicle_edit": {
+        "title": "Edit which vehicle?",
+        "data": {
+          "name": "Vehicle"
+        }
+      },
+      "vehicle_remove": {
+        "title": "Remove which vehicle?",
+        "data": {
+          "name": "Vehicle"
+        }
+      },
       "init": {
         "title": "Home Energy Twin",
         "description": "Change any section, then choose Done.",
@@ -302,6 +354,7 @@
           "sources_live": "Live data entities",
           "sources_octopus": "Octopus entities",
           "sources_solar_history": "Solar forecast & history",
+          "vehicles": "Vehicles (EV charging)",
           "hardware_preset": "Apply a hardware preset",
           "hardware": "Solar & battery",
           "tariff_preset": "Apply a tariff preset",
@@ -363,6 +416,9 @@
       },
       "export_today": {
         "name": "Exported today"
+      },
+      "ev_tonight": {
+        "name": "EV charging expected tonight"
       },
       "plan_target_soc": {
         "name": "Planned overnight charge target"

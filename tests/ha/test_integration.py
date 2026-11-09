@@ -1,5 +1,7 @@
 from datetime import timedelta
 
+import pytest
+
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -209,3 +211,81 @@ async def test_config_flow_copy_from_existing(hass: HomeAssistant):
         "round_trip_eff": 0.9, "reserve_pct": 10, "export_limit_kw": 3.68, "cycle_cost_p": 0})
     assert r["type"] == "create_entry" and r["title"] == "Scenario 2"
     assert r["options"]["power_entity"] == "sensor.mini" and r["options"]["battery_kwh"] == 16
+
+
+async def test_vehicles_drive_the_ev_plan(hass: HomeAssistant):
+    hass.states.async_set("binary_sensor.tesla_plug", "on")
+    hass.states.async_set("device_tracker.tesla", "home")
+    hass.states.async_set("sensor.tesla_soc", "40", {"unit_of_measurement": "%"})
+    hass.states.async_set("sensor.leaf_status", "Disconnected")
+    hass.states.async_set("device_tracker.leaf", "not_home")
+    vehicles = [
+        {"name": "Tesla", "mode": "iog", "plug_entity": "binary_sensor.tesla_plug", "home_entity": "device_tracker.tesla",
+         "soc_entity": "sensor.tesla_soc", "capacity_kwh": 60, "target_soc_pct": 80, "charger_kw": 7.0},
+        {"name": "Leaf", "mode": "offpeak", "plug_entity": "sensor.leaf_status", "home_entity": "device_tracker.leaf",
+         "capacity_kwh": 40, "charger_kw": 7.0, "session_kwh": 12},
+    ]
+    entry = await _setup(hass, vehicles=vehicles)
+    c = entry.runtime_data
+    info = {n["vehicle"]: n for n in c.ev_info}
+    assert info["Tesla"]["plugged"] is True and info["Tesla"]["home"] is True and info["Tesla"]["probability"] == 1.0
+    assert info["Tesla"]["needed_kwh"] == round(24 / 0.9, 1)
+    assert info["Leaf"]["plugged"] is False and info["Leaf"]["home"] is False and info["Leaf"]["probability"] == 0.5
+    st = hass.states.get("sensor.home_energy_twin_ev_charging_expected_tonight")
+    assert float(st.state) > 20 and len(st.attributes["vehicles"]) == 2
+    assert any(x >= 6.9 for x in c.plan.slots.exp_ev_kw)            # the plugged-in car charges at full rate
+    # a car that is plugged in later changes the plan: unplug the Tesla -> its load becomes only a probability
+    hass.states.async_set("binary_sensor.tesla_plug", "off")
+    await c.async_recalculate()
+    assert {n["vehicle"]: n for n in c.ev_info}["Tesla"]["probability"] == 0.5
+
+
+async def test_vehicle_options_flow(hass: HomeAssistant):
+    entry = await _setup(hass)
+    r = await hass.config_entries.options.async_init(entry.entry_id)
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "vehicles"})
+    assert r["type"] == "menu" and "vehicle_edit" not in r["menu_options"]
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "vehicle_add"})
+    assert r["step_id"] == "vehicle_add"
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {
+        "name": "Kia", "mode": "iog", "capacity_kwh": 64, "target_soc_pct": 90, "charger_kw": 7.4, "session_kwh": 0,
+        "plug_entity": "sensor.kia_plug", "plug_states": "ready, charging"})
+    assert r["type"] == "menu" and "vehicle_edit" in r["menu_options"]
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "init"})
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "done"})
+    await hass.async_block_till_done()
+    v = hass.config_entries.async_get_entry(entry.entry_id).options["vehicles"]
+    assert v[0]["name"] == "Kia" and v[0]["plug_states"] == "ready, charging"
+
+
+async def test_sessions_are_learned_only_when_a_car_actually_charges(hass: HomeAssistant):
+    hass.states.async_set("sensor.car_power", "7000", {"unit_of_measurement": "W"})
+    hass.states.async_set("binary_sensor.car_plug", "on")
+    entry = await _setup(hass, vehicles=[{"name": "Car", "mode": "offpeak", "power_entity": "sensor.car_power",
+                                          "plug_entity": "binary_sensor.car_plug", "session_kwh": 0, "charger_kw": 7}])
+    c = entry.runtime_data
+    t = dt_util.utcnow()
+    for k in range(60):                                       # one hour at 7 kW = 7 kWh
+        c._track_vehicles(t + timedelta(minutes=k), 1 / 60)
+    assert c.veh_rt["Car"]["delivered"] == pytest.approx(7.0, abs=0.2)
+    assert not c.learn_live["Car"].sessions                   # still in progress
+    hass.states.async_set("sensor.car_power", "0", {"unit_of_measurement": "W"})
+    c._track_vehicles(t + timedelta(hours=5), 0.0)             # idle for > 3 h: session over
+    assert c.learn_live["Car"].sessions == [pytest.approx(7.0, abs=0.2)]
+    # a day with the car never plugged in is recorded too (it lowers that weekday's probability)
+    hass.states.async_set("binary_sensor.car_plug", "off")
+    c._track_vehicles(t + timedelta(days=1, hours=5), 0.0)
+    assert sum(c.learn_live["Car"].wd_seen) >= 1
+
+
+async def test_dashboard_vehicle_card_renders(hass: HomeAssistant):
+    import pathlib, yaml
+    from homeassistant.helpers.template import Template
+    hass.states.async_set("sensor.leaf_status", "Connected: waiting for car demand")
+    entry = await _setup(hass, vehicles=[{"name": "Leaf", "mode": "offpeak", "plug_entity": "sensor.leaf_status",
+                                          "session_kwh": 12}])
+    dash = yaml.safe_load(pathlib.Path("dashboard/energy_twin_dashboard.yaml").read_text())
+    card = next(c for v in dash["views"] if v["path"] == "diagnostics" for c in v["cards"]
+                if c.get("title") == "Vehicles (what the twin understood)")
+    out = Template(card["content"], hass).async_render()
+    assert "**Leaf**" in out and "True (Connected: waiting for car demand)" in out
