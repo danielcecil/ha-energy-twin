@@ -1,0 +1,514 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Choose your hardware",
+        "description": "Pick a preset or Custom. Values are approximate - check datasheets.",
+        "data": {
+          "hardware_preset": "Hardware"
+        },
+        "data_description": {
+          "hardware_preset": "Pick a starting point; every value stays editable afterwards."
+        }
+      },
+      "tariff_preset": {
+        "title": "Choose your tariff",
+        "data": {
+          "tariff_preset": "Tariff"
+        },
+        "data_description": {
+          "tariff_preset": "Pick a starting point; live rate entities override these."
+        }
+      },
+      "sources_live": {
+        "title": "Live data",
+        "description": "All optional. The twin works from the tariff and a typical profile without them.",
+        "data": {
+          "power_entity": "House power now (Home Mini)",
+          "ev_power_entities": "Car charger power sensors",
+          "pv_now_entity": "Expected solar generation now",
+          "import_now_entity": "Current import price",
+          "export_now_entity": "Current export price"
+        },
+        "data_description": {
+          "power_entity": "Whole-home import power sensor, W or kW. Used to drive the live twin.",
+          "ev_power_entities": "Optional. Lets the twin separate EV load from house load, so the battery never 'feeds' a car.",
+          "pv_now_entity": "Real-time expected/forecast solar power sensor (W or kW), for the array size set below. Overrides the hourly forecast for the current slot.",
+          "import_now_entity": "Current tariff price entity (GBP/kWh or p/kWh, auto-detected).",
+          "export_now_entity": "Current export tariff price entity (GBP/kWh or p/kWh)."
+        }
+      },
+      "sources_octopus": {
+        "title": "Octopus Energy",
+        "description": "Entities from the Octopus Energy integration, or your own.",
+        "data": {
+          "import_rates_entities": "Import rates entities",
+          "export_rates_entities": "Export rates entities",
+          "dispatch_entity": "Intelligent dispatching entity",
+          "power_up_entity": "Power Up event entity",
+          "power_down_entity": "Power Down event entity"
+        },
+        "data_description": {
+          "import_rates_entities": "Octopus Energy integration rate entities (current day + next day). Their 'rates' attribute is read.",
+          "export_rates_entities": "Octopus export rate entities, if you want real export prices (e.g. Agile Outgoing).",
+          "dispatch_entity": "Octopus Intelligent 'dispatching' binary sensor - planned smart-charge slots are priced at the cheap rate.",
+          "power_up_entity": "Any binary sensor / event / calendar that is 'on' or lists windows during Power Up events.",
+          "power_down_entity": "Any binary sensor / event / calendar that is 'on' or lists windows during Power Down events."
+        }
+      },
+      "sources_solar_history": {
+        "title": "Solar forecast & history",
+        "data": {
+          "forecast_entry": "Solar forecast integration",
+          "forecast_ref_kwp": "Forecast array size (kWp)",
+          "consumption_stat": "Home consumption statistic",
+          "ev_stats": "EV energy statistics",
+          "history_days": "Days of history to learn from"
+        },
+        "data_description": {
+          "forecast_entry": "Forecast.Solar, Solcast or Open-Meteo Solar Forecast config entry.",
+          "forecast_ref_kwp": "The array size that forecast integration is configured for. The twin scales it to your modelled array.",
+          "consumption_stat": "Long-term statistic id for whole-home import kWh (an energy sensor, or e.g. octopus_energy:electricity_<serial>_<mpan>_import_consumption - see Developer tools > Statistics).",
+          "ev_stats": "Comma-separated statistic ids for your chargers' kWh. If blank, off-peak demand above the night base load is assumed to be the cars."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Home Energy Twin is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "user": {
+        "title": "Choose your hardware",
+        "description": "Pick a preset or Custom. Values are approximate - check datasheets.",
+        "data": {
+          "hardware_preset": "Hardware"
+        },
+        "data_description": {
+          "hardware_preset": "Pick a starting point; every value stays editable afterwards."
+        }
+      },
+      "tariff_preset": {
+        "title": "Choose your tariff",
+        "data": {
+          "tariff_preset": "Tariff"
+        },
+        "data_description": {
+          "tariff_preset": "Pick a starting point; live rate entities override these."
+        }
+      },
+      "hardware_preset": {
+        "title": "Hardware preset",
+        "description": "Overwrites the hardware numbers with the preset's values.",
+        "data": {
+          "hardware_preset": "Hardware"
+        },
+        "data_description": {
+          "hardware_preset": "Pick a starting point; every value stays editable afterwards."
+        }
+      },
+      "sources_live": {
+        "title": "Live data",
+        "description": "All optional. The twin works from the tariff and a typical profile without them.",
+        "data": {
+          "power_entity": "House power now (Home Mini)",
+          "ev_power_entities": "Car charger power sensors",
+          "pv_now_entity": "Expected solar generation now",
+          "import_now_entity": "Current import price",
+          "export_now_entity": "Current export price"
+        },
+        "data_description": {
+          "power_entity": "Whole-home import power sensor, W or kW. Used to drive the live twin.",
+          "ev_power_entities": "Optional. Lets the twin separate EV load from house load, so the battery never 'feeds' a car.",
+          "pv_now_entity": "Real-time expected/forecast solar power sensor (W or kW), for the array size set below. Overrides the hourly forecast for the current slot.",
+          "import_now_entity": "Current tariff price entity (GBP/kWh or p/kWh, auto-detected).",
+          "export_now_entity": "Current export tariff price entity (GBP/kWh or p/kWh)."
+        }
+      },
+      "sources_octopus": {
+        "title": "Octopus Energy",
+        "description": "Entities from the Octopus Energy integration, or your own.",
+        "data": {
+          "import_rates_entities": "Import rates entities",
+          "export_rates_entities": "Export rates entities",
+          "dispatch_entity": "Intelligent dispatching entity",
+          "power_up_entity": "Power Up event entity",
+          "power_down_entity": "Power Down event entity"
+        },
+        "data_description": {
+          "import_rates_entities": "Octopus Energy integration rate entities (current day + next day). Their 'rates' attribute is read.",
+          "export_rates_entities": "Octopus export rate entities, if you want real export prices (e.g. Agile Outgoing).",
+          "dispatch_entity": "Octopus Intelligent 'dispatching' binary sensor - planned smart-charge slots are priced at the cheap rate.",
+          "power_up_entity": "Any binary sensor / event / calendar that is 'on' or lists windows during Power Up events.",
+          "power_down_entity": "Any binary sensor / event / calendar that is 'on' or lists windows during Power Down events."
+        }
+      },
+      "sources_solar_history": {
+        "title": "Solar forecast & history",
+        "data": {
+          "forecast_entry": "Solar forecast integration",
+          "forecast_ref_kwp": "Forecast array size (kWp)",
+          "consumption_stat": "Home consumption statistic",
+          "ev_stats": "EV energy statistics",
+          "history_days": "Days of history to learn from"
+        },
+        "data_description": {
+          "forecast_entry": "Forecast.Solar, Solcast or Open-Meteo Solar Forecast config entry.",
+          "forecast_ref_kwp": "The array size that forecast integration is configured for. The twin scales it to your modelled array.",
+          "consumption_stat": "Long-term statistic id for whole-home import kWh (an energy sensor, or e.g. octopus_energy:electricity_<serial>_<mpan>_import_consumption - see Developer tools > Statistics).",
+          "ev_stats": "Comma-separated statistic ids for your chargers' kWh. If blank, off-peak demand above the night base load is assumed to be the cars."
+        }
+      },
+      "tariff": {
+        "title": "Tariff",
+        "data": {
+          "cheap_start": "Cheap window start",
+          "cheap_end": "Cheap window end",
+          "cheap_p": "Cheap import rate (p/kWh)",
+          "standard_p": "Standard import rate (p/kWh)",
+          "export_p": "Export rate (p/kWh)",
+          "power_up_import_p": "Power Up import rate (p/kWh)",
+          "power_down_export_p": "Power Down export rate (p/kWh)",
+          "power_down_bonus_p": "Power Down bonus (p/kWh discharged)"
+        },
+        "data_description": {
+          "cheap_p": "Used when no rate entity covers a slot.",
+          "power_up_import_p": "Placeholder - set to the actual terms of the event.",
+          "power_down_export_p": "Placeholder - set to the actual terms of the event.",
+          "power_down_bonus_p": "Extra reward per kWh the battery discharges during an event."
+        }
+      },
+      "hardware": {
+        "title": "Solar & battery",
+        "data": {
+          "pv_kwp": "Solar array (kWp)",
+          "inverter_kw": "Inverter AC rating (kW)",
+          "pv_annual_yield": "Annual yield (kWh per kWp)",
+          "battery_kwh": "Battery usable capacity (kWh)",
+          "battery_max_kw": "Battery max charge/discharge (kW)",
+          "round_trip_eff": "Round-trip efficiency (0-1)",
+          "reserve_pct": "Reserve (%)",
+          "export_limit_kw": "Export limit (kW)",
+          "cycle_cost_p": "Wear cost (p per kWh discharged)"
+        },
+        "data_description": {
+          "pv_kwp": "0 = no solar.",
+          "inverter_kw": "Clips solar and caps battery power (hybrid inverter assumption).",
+          "pv_annual_yield": "From PVGIS or your installer for your roof. UK south-facing is ~900-1000.",
+          "battery_kwh": "0 = no battery.",
+          "reserve_pct": "Never discharged below this.",
+          "export_limit_kw": "3.68 kW is the G98 single-phase default.",
+          "cycle_cost_p": "Optional. Makes the planner avoid low-value cycling."
+        }
+      },
+      "finance": {
+        "title": "Costs & finance",
+        "data": {
+          "pv_cost_fixed": "Solar fixed cost (£)",
+          "pv_cost_per_kwp": "Solar cost per kWp (£)",
+          "battery_cost_fixed": "Battery fixed cost (£)",
+          "battery_cost_per_kwh": "Battery cost per kWh (£)",
+          "other_cost": "Other install costs (£)",
+          "deposit": "Deposit (£)",
+          "apr_pct": "Finance APR (%)",
+          "term_months": "Finance term (months)",
+          "tariff_escalation_pct": "Tariff inflation (%/yr)",
+          "pv_degradation_pct": "Solar degradation (%/yr)",
+          "battery_degradation_pct": "Battery degradation (%/yr)",
+          "discount_rate_pct": "Discount rate (%)",
+          "horizon_years": "Analysis horizon (years)"
+        },
+        "data_description": {
+          "other_cost": "Scaffolding, consumer unit, EV-safe isolation, etc.",
+          "term_months": "0 = pay in cash."
+        }
+      },
+      "strategy": {
+        "title": "Strategy",
+        "data": {
+          "strategy": "Strategy",
+          "margin_pct": "Safety margin on evening demand (%)",
+          "export_from": "Earliest battery export time (rules mode)",
+          "export_margin_p": "Required export margin (p/kWh)",
+          "arbitrage": "Allow cheap-grid-to-export arbitrage",
+          "allow_battery_export": "Allow exporting from the battery"
+        },
+        "data_description": {
+          "export_margin_p": "Export only if it beats re-buying at the cheap rate by this much.",
+          "arbitrage": "Charge from the cheap window specifically to export later."
+        }
+      },
+      "assumptions": {
+        "title": "Assumptions",
+        "data": {
+          "night_base_load_kw": "Night base load (kW)",
+          "default_daily_house_kwh": "Typical house use (kWh/day)",
+          "default_daily_ev_kwh": "Typical EV charging (kWh/day)",
+          "power_down_per_month": "Assumed Power Downs per month",
+          "power_down_start_hour": "Power Down start hour",
+          "power_down_hours": "Power Down length (h)",
+          "power_up_per_month": "Assumed Power Ups per month",
+          "power_up_start_hour": "Power Up start hour",
+          "power_up_hours": "Power Up length (h)"
+        },
+        "data_description": {
+          "night_base_load_kw": "Used to separate cars from house when no EV statistics are given.",
+          "default_daily_house_kwh": "Used until enough history exists.",
+          "power_down_per_month": "For the annual what-if only."
+        }
+      },
+      "init": {
+        "title": "Home Energy Twin",
+        "description": "Change any section, then choose Done.",
+        "menu_options": {
+          "sources_live": "Live data entities",
+          "sources_octopus": "Octopus entities",
+          "sources_solar_history": "Solar forecast & history",
+          "hardware_preset": "Apply a hardware preset",
+          "hardware": "Solar & battery",
+          "tariff_preset": "Apply a tariff preset",
+          "tariff": "Tariff",
+          "finance": "Costs & finance",
+          "strategy": "Strategy",
+          "assumptions": "Assumptions",
+          "done": "Save and finish"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "soc": {
+        "name": "Battery state of charge"
+      },
+      "stored_energy": {
+        "name": "Battery stored energy"
+      },
+      "battery_power": {
+        "name": "Battery power"
+      },
+      "grid_power": {
+        "name": "Grid power"
+      },
+      "solar_power": {
+        "name": "Solar power"
+      },
+      "house_load": {
+        "name": "House load"
+      },
+      "mode": {
+        "name": "Twin mode"
+      },
+      "import_price": {
+        "name": "Import price"
+      },
+      "export_price": {
+        "name": "Export price"
+      },
+      "saving_today": {
+        "name": "Saving today"
+      },
+      "saving_month": {
+        "name": "Saving this month"
+      },
+      "saving_total": {
+        "name": "Saving total"
+      },
+      "cost_today_actual": {
+        "name": "Cost today (actual)"
+      },
+      "cost_today_twin": {
+        "name": "Cost today (twin)"
+      },
+      "solar_today": {
+        "name": "Solar generated today"
+      },
+      "export_today": {
+        "name": "Exported today"
+      },
+      "plan_target_soc": {
+        "name": "Planned overnight charge target"
+      },
+      "plan_battery_export": {
+        "name": "Planned battery export"
+      },
+      "plan_saving": {
+        "name": "Plan saving (next day)"
+      },
+      "annual_saving": {
+        "name": "Annual saving"
+      },
+      "annual_pv_saving": {
+        "name": "Annual saving from solar"
+      },
+      "annual_battery_saving": {
+        "name": "Annual saving from battery"
+      },
+      "payback_years": {
+        "name": "Payback"
+      },
+      "capex": {
+        "name": "Outlay"
+      },
+      "monthly_net_cashflow": {
+        "name": "Monthly net cashflow"
+      },
+      "monthly_payment": {
+        "name": "Monthly finance payment"
+      },
+      "net_gain": {
+        "name": "Net gain over horizon"
+      },
+      "npv": {
+        "name": "Net present value"
+      },
+      "sweep_best": {
+        "name": "Best sweep result"
+      },
+      "next_event": {
+        "name": "Next Power event"
+      },
+      "diagnostics": {
+        "name": "Diagnostics"
+      }
+    },
+    "number": {
+      "pv_kwp": {
+        "name": "Solar array size"
+      },
+      "battery_kwh": {
+        "name": "Battery capacity"
+      },
+      "inverter_kw": {
+        "name": "Inverter size"
+      },
+      "battery_max_kw": {
+        "name": "Battery max power"
+      },
+      "reserve_pct": {
+        "name": "Battery reserve"
+      },
+      "export_limit_kw": {
+        "name": "Export limit"
+      },
+      "pv_annual_yield": {
+        "name": "Annual yield per kWp"
+      },
+      "export_p": {
+        "name": "Export rate"
+      },
+      "cheap_p": {
+        "name": "Cheap import rate"
+      },
+      "standard_p": {
+        "name": "Standard import rate"
+      },
+      "pv_cost_per_kwp": {
+        "name": "Solar cost per kWp"
+      },
+      "battery_cost_per_kwh": {
+        "name": "Battery cost per kWh"
+      },
+      "power_down_per_month": {
+        "name": "Assumed Power Downs per month"
+      },
+      "power_up_per_month": {
+        "name": "Assumed Power Ups per month"
+      }
+    },
+    "select": {
+      "strategy": {
+        "name": "Strategy"
+      },
+      "hardware_preset": {
+        "name": "Hardware preset"
+      }
+    },
+    "switch": {
+      "arbitrage": {
+        "name": "Grid-to-export arbitrage"
+      },
+      "allow_battery_export": {
+        "name": "Allow battery export"
+      }
+    },
+    "button": {
+      "recalculate": {
+        "name": "Recalculate annual what-if"
+      },
+      "run_sweep": {
+        "name": "Run size sweep"
+      },
+      "reset_twin": {
+        "name": "Reset virtual battery"
+      }
+    }
+  },
+  "services": {
+    "add_event": {
+      "name": "Add Power Up / Power Down event",
+      "description": "Tell the twin about an Octopus event window.",
+      "fields": {
+        "kind": {
+          "name": "Kind",
+          "description": "power_up or power_down"
+        },
+        "start": {
+          "name": "Start",
+          "description": ""
+        },
+        "end": {
+          "name": "End",
+          "description": ""
+        },
+        "import_rate_p": {
+          "name": "Import rate (p/kWh)",
+          "description": "Overrides the default."
+        },
+        "export_rate_p": {
+          "name": "Export rate (p/kWh)",
+          "description": "Overrides the default."
+        },
+        "bonus_p": {
+          "name": "Bonus (p/kWh)",
+          "description": "Overrides the default."
+        }
+      }
+    },
+    "clear_events": {
+      "name": "Clear manual events",
+      "description": "Remove events added with add_event."
+    },
+    "run_sweep": {
+      "name": "Run size sweep",
+      "description": "Evaluate combinations of battery size, array size and inverter size over a year.",
+      "fields": {
+        "battery_kwh": {
+          "name": "Battery sizes (kWh)",
+          "description": "List, e.g. [0, 5, 10]"
+        },
+        "pv_kwp": {
+          "name": "Array sizes (kWp)",
+          "description": "List"
+        },
+        "inverter_kw": {
+          "name": "Inverter sizes (kW)",
+          "description": "Optional list"
+        },
+        "strategy": {
+          "name": "Strategy",
+          "description": "rules is much faster"
+        }
+      }
+    },
+    "recalculate": {
+      "name": "Recalculate",
+      "description": "Re-run the plan and annual what-if."
+    },
+    "reset_twin": {
+      "name": "Reset twin",
+      "description": "Reset the virtual battery and savings ledger."
+    }
+  }
+}

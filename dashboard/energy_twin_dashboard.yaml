@@ -1,0 +1,261 @@
+# Home Energy Twin dashboard.
+# Paste into: Settings > Dashboards > (new dashboard) > Raw configuration editor.
+# Charts need "apexcharts-card" from HACS (Frontend). Everything else is core cards.
+title: Energy Twin
+views:
+  # ───────────────────────────── 1. LIVE TWIN ─────────────────────────────
+  - title: Live twin
+    path: live
+    icon: mdi:home-lightning-bolt
+    cards:
+      - type: markdown
+        content: >
+          ## Virtual battery: **{{ states('sensor.home_energy_twin_twin_mode') }}**
+
+          This is a *simulation* of the kit you configured, stepped against your real
+          Home Mini load. Nothing here controls real hardware.
+      - type: horizontal-stack
+        cards:
+          - type: gauge
+            entity: sensor.home_energy_twin_battery_state_of_charge
+            name: Virtual battery
+            min: 0
+            max: 100
+            needle: true
+            severity: {red: 0, yellow: 15, green: 35}
+          - type: gauge
+            entity: sensor.home_energy_twin_planned_overnight_charge_target
+            name: Tonight's charge target
+            min: 0
+            max: 100
+      - type: grid
+        columns: 3
+        square: false
+        cards:
+          - {type: tile, entity: sensor.home_energy_twin_house_load, name: House}
+          - {type: tile, entity: sensor.home_energy_twin_solar_power, name: Solar (modelled)}
+          - {type: tile, entity: sensor.home_energy_twin_battery_power, name: Battery (+charge)}
+          - {type: tile, entity: sensor.home_energy_twin_grid_power, name: Grid (+import)}
+          - {type: tile, entity: sensor.home_energy_twin_import_price, name: Import price}
+          - {type: tile, entity: sensor.home_energy_twin_export_price, name: Export price}
+      - type: entities
+        title: What it would have saved you
+        entities:
+          - {entity: sensor.home_energy_twin_saving_today, name: Today}
+          - {entity: sensor.home_energy_twin_saving_this_month, name: This month}
+          - {entity: sensor.home_energy_twin_saving_total, name: Since twin started}
+          - {entity: sensor.home_energy_twin_cost_today_actual, name: Today's real bill}
+          - {entity: sensor.home_energy_twin_cost_today_twin, name: Today's bill with kit}
+          - {entity: sensor.home_energy_twin_solar_generated_today, name: Solar generated today}
+          - {entity: sensor.home_energy_twin_exported_today, name: Exported today}
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          title: Plan for the next ~33 hours
+          show_states: false
+        graph_span: 36h
+        span: {start: hour}
+        now: {show: true, label: Now}
+        yaxis:
+          - {id: kw, decimals: 1, apex_config: {title: {text: kW}}}
+          - {id: pct, opposite: true, min: 0, max: 100, decimals: 0, apex_config: {title: {text: "SoC %"}}}
+          - {id: p, show: false, decimals: 0}
+        apex_config:
+          chart: {height: 320}
+          stroke: {width: [0, 2, 2, 2, 1]}
+        series:
+          - entity: sensor.home_energy_twin_planned_overnight_charge_target
+            name: Battery kW (+charge / -discharge)
+            type: column
+            yaxis_id: kw
+            color: "#2e7d32"
+            data_generator: |
+              const s = entity.attributes.series; if (!s) return [];
+              return s.t.map((t, i) => [t, s.battery_kw[i]]);
+          - entity: sensor.home_energy_twin_planned_overnight_charge_target
+            name: Grid kW (+import)
+            type: line
+            curve: stepline
+            yaxis_id: kw
+            color: "#c62828"
+            data_generator: |
+              const s = entity.attributes.series; if (!s) return [];
+              return s.t.map((t, i) => [t, s.grid_kw[i]]);
+          - entity: sensor.home_energy_twin_planned_overnight_charge_target
+            name: Solar kW
+            type: area
+            curve: smooth
+            yaxis_id: kw
+            color: "#f9a825"
+            opacity: 0.25
+            data_generator: |
+              const s = entity.attributes.series; if (!s) return [];
+              return s.t.map((t, i) => [t, s.pv_kw[i]]);
+          - entity: sensor.home_energy_twin_planned_overnight_charge_target
+            name: Battery SoC %
+            type: line
+            curve: smooth
+            yaxis_id: pct
+            color: "#1565c0"
+            data_generator: |
+              const s = entity.attributes.series; if (!s) return [];
+              return s.t.map((t, i) => [t, s.soc_pct[i]]);
+          - entity: sensor.home_energy_twin_planned_overnight_charge_target
+            name: Import price p/kWh
+            type: line
+            curve: stepline
+            yaxis_id: p
+            color: "#6d4c41"
+            stroke_width: 1
+            data_generator: |
+              const s = entity.attributes.series; if (!s) return [];
+              return s.t.map((t, i) => [t, s.import_p[i]]);
+      - type: entities
+        title: Plan summary
+        entities:
+          - {entity: sensor.home_energy_twin_planned_battery_export, name: Planned export from battery}
+          - {entity: sensor.home_energy_twin_plan_saving_next_day, name: Plan saving vs no kit}
+          - {entity: sensor.home_energy_twin_next_power_event, name: Next Power Up/Down}
+
+  # ───────────────────────────── 2. WHAT-IF ─────────────────────────────
+  - title: What-if
+    path: whatif
+    icon: mdi:calculator-variant
+    cards:
+      - type: entities
+        title: Try some kit
+        show_header_toggle: false
+        entities:
+          - select.home_energy_twin_hardware_preset
+          - number.home_energy_twin_solar_array_size
+          - number.home_energy_twin_battery_capacity
+          - number.home_energy_twin_inverter_size
+          - number.home_energy_twin_battery_max_power
+          - number.home_energy_twin_battery_reserve
+          - number.home_energy_twin_export_limit
+          - number.home_energy_twin_annual_yield_per_kwp
+      - type: entities
+        title: Strategy & prices
+        show_header_toggle: false
+        entities:
+          - select.home_energy_twin_strategy
+          - switch.home_energy_twin_grid_to_export_arbitrage
+          - switch.home_energy_twin_allow_battery_export
+          - number.home_energy_twin_cheap_import_rate
+          - number.home_energy_twin_standard_import_rate
+          - number.home_energy_twin_export_rate
+          - number.home_energy_twin_assumed_power_downs_per_month
+          - number.home_energy_twin_assumed_power_ups_per_month
+      - type: entities
+        title: Prices to test against
+        entities:
+          - number.home_energy_twin_solar_cost_per_kwp
+          - number.home_energy_twin_battery_cost_per_kwh
+          - {entity: button.home_energy_twin_recalculate_annual_what_if, name: Recalculate year}
+      - type: horizontal-stack
+        cards:
+          - {type: tile, entity: sensor.home_energy_twin_annual_saving, name: Saving / year}
+          - {type: tile, entity: sensor.home_energy_twin_payback, name: Payback}
+          - {type: tile, entity: sensor.home_energy_twin_outlay, name: Outlay}
+      - type: horizontal-stack
+        cards:
+          - {type: tile, entity: sensor.home_energy_twin_annual_saving_from_solar, name: …from solar}
+          - {type: tile, entity: sensor.home_energy_twin_annual_saving_from_battery, name: …from battery}
+          - {type: tile, entity: sensor.home_energy_twin_monthly_net_cashflow, name: Net / month}
+      - type: markdown
+        title: Cash vs finance
+        content: >
+          {% set s = 'sensor.home_energy_twin_' %}
+          | | |
+          |---|---|
+          | Outlay | £{{ states(s ~ 'outlay') }} |
+          | Saving in year 1 | £{{ states(s ~ 'annual_saving') }} |
+          | Finance payment | £{{ states(s ~ 'monthly_finance_payment') }} / month |
+          | **Net cashflow** | **£{{ states(s ~ 'monthly_net_cashflow') }} / month** |
+          | Payback (with tariff inflation, degradation) | {{ states(s ~ 'payback') }} years |
+          | Simple payback | {{ state_attr(s ~ 'payback', 'simple_payback_years') }} years |
+          | Net gain over horizon | £{{ states(s ~ 'net_gain_over_horizon') }} |
+          | NPV | £{{ states(s ~ 'net_present_value') }} |
+
+          *Model: {{ state_attr(s ~ 'annual_saving', 'strategy') }} strategy, load profile
+          {{ state_attr(s ~ 'annual_saving', 'profile') }}.*
+      - type: markdown
+        title: Month by month (baseline vs with kit)
+        content: >
+          {% set m = state_attr('sensor.home_energy_twin_annual_saving', 'monthly') %}
+          {% if m %}
+          | Month | Without | With | **Saved** |
+          |---|--:|--:|--:|
+          {% for r in m -%}
+          | {{ r.month }} | £{{ r.baseline }} | £{{ r.scenario }} | **£{{ r.saving }}** |
+          {% endfor %}
+          {% else %}Annual model still calculating…{% endif %}
+
+  # ───────────────────────────── 3. SIZE SWEEP ─────────────────────────────
+  - title: Size sweep
+    path: sweep
+    icon: mdi:chart-bubble
+    cards:
+      - type: entities
+        entities:
+          - {entity: button.home_energy_twin_run_size_sweep, name: Run default sweep (rules engine, ~seconds)}
+          - {entity: sensor.home_energy_twin_best_sweep_result, name: Best by NPV}
+      - type: markdown
+        title: Ranked by net present value
+        content: >
+          {% set rows = state_attr('sensor.home_energy_twin_best_sweep_result', 'rows') %}
+          {% if rows %}
+          | kWp | kWh | Inv kW | Outlay | Saving/yr | Payback | Net/month | NPV |
+          |--:|--:|--:|--:|--:|--:|--:|--:|
+          {% for r in rows -%}
+          | {{ r.pv_kwp }} | {{ r.battery_kwh }} | {{ r.inverter_kw }} | £{{ r.capex }} | £{{ r.saving_year1 }} | {{ r.payback_years or '—' }} y | £{{ r.monthly_net }} | £{{ r.npv }} |
+          {% endfor %}
+          {% else %}Press **Run size sweep**. For custom grids call the
+          `energy_twin.run_sweep` service (battery_kwh, pv_kwp, inverter_kw lists).{% endif %}
+
+  # ───────────────────────────── 4. POWER UP / DOWN ─────────────────────────────
+  - title: Octopus events
+    path: events
+    icon: mdi:flash-alert
+    cards:
+      - type: markdown
+        content: >
+          Events seen from your Octopus entities appear automatically. Use the form below to
+          add one by hand (needs `packages/energy_twin_helpers.yaml`).
+
+          **Power Up** = charge everything. **Power Down** = run on battery and export.
+      - type: entities
+        title: Add an event
+        entities:
+          - input_select.et_event_kind
+          - input_datetime.et_event_start
+          - input_datetime.et_event_end
+          - input_number.et_event_rate_p
+          - {type: button, name: Add event, action_name: ADD, tap_action: {action: call-service, service: script.et_add_event}}
+          - {type: button, name: Clear manual events, action_name: CLEAR, tap_action: {action: call-service, service: energy_twin.clear_events}}
+      - type: markdown
+        title: Known events
+        content: >
+          {% set ev = state_attr('sensor.home_energy_twin_next_power_event', 'events') %}
+          {% if ev %}{% for e in ev -%}
+          - **{{ e.kind }}** {{ as_timestamp(e.start) | timestamp_custom('%a %d %b %H:%M') }} → {{ as_timestamp(e.end) | timestamp_custom('%H:%M') }}
+          {% endfor %}{% else %}None right now.{% endif %}
+
+  # ───────────────────────────── 5. SETUP ─────────────────────────────
+  - title: Diagnostics
+    path: diagnostics
+    icon: mdi:stethoscope
+    cards:
+      - type: markdown
+        content: >
+          {% set d = state_attr('sensor.home_energy_twin_diagnostics', 'diagnostics') %}
+          {% if d %}{% for k, v in d.items() -%}
+          - **{{ k }}**: {{ v }}
+          {% endfor %}{% endif %}
+
+          If *import_rate_slots* is 0, check the Octopus rate entities selected in the
+          integration's options. If *forecast_slots_used* is 0, the solar forecast entry is
+          missing and a synthetic seasonal curve is being used.
+      - type: entities
+        entities:
+          - {entity: button.home_energy_twin_reset_virtual_battery, name: Reset virtual battery & ledger}

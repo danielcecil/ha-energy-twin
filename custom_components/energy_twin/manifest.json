@@ -1,0 +1,14 @@
+{
+  "domain": "energy_twin",
+  "name": "Home Energy Twin",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["recorder"],
+  "after_dependencies": ["energy", "forecast_solar", "octopus_energy"],
+  "documentation": "https://github.com/danielcecil/ha-energy-twin",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/danielcecil/ha-energy-twin/issues",
+  "requirements": ["numpy>=1.26"],
+  "version": "0.1.0"
+}

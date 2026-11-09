@@ -1,0 +1,220 @@
+"""Config + options flow. One declarative table drives every settings page."""
+from __future__ import annotations
+
+from typing import Any
+
+import voluptuous as vol
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.core import callback
+from homeassistant.helpers import selector as sel
+
+from .const import *  # noqa: F403
+from .sim.presets import HARDWARE_PRESETS, TARIFF_PRESETS, apply_preset, preset_choices
+
+
+def _ent(multiple: bool = False):
+    return sel.EntitySelector(sel.EntitySelectorConfig(multiple=multiple))
+
+
+def _num(lo, hi, step, unit=None, mode="box"):
+    cfg = {"min": lo, "max": hi, "step": step, "mode": sel.NumberSelectorMode(mode)}
+    if unit:
+        cfg["unit_of_measurement"] = unit
+    return sel.NumberSelector(sel.NumberSelectorConfig(**cfg))
+
+
+def _choice(options: dict[str, str]):
+    return sel.SelectSelector(sel.SelectSelectorConfig(
+        options=[sel.SelectOptionDict(value=k, label=v) for k, v in options.items()],
+        mode=sel.SelectSelectorMode.DROPDOWN))
+
+
+_TIME, _BOOL, _TEXT = sel.TimeSelector(), sel.BooleanSelector(), sel.TextSelector()
+
+# step -> ordered [(key, selector, required)]
+STEPS: dict[str, list[tuple[str, Any, bool]]] = {
+    "sources_live": [
+        (CONF_POWER_ENTITY, _ent(), False),
+        (CONF_EV_POWER_ENTITIES, _ent(True), False),
+        (CONF_PV_NOW_ENTITY, _ent(), False),
+        (CONF_IMPORT_NOW_ENTITY, _ent(), False),
+        (CONF_EXPORT_NOW_ENTITY, _ent(), False),
+    ],
+    "sources_octopus": [
+        (CONF_IMPORT_RATES_ENTITIES, _ent(True), False),
+        (CONF_EXPORT_RATES_ENTITIES, _ent(True), False),
+        (CONF_DISPATCH_ENTITY, _ent(), False),
+        (CONF_POWER_UP_ENTITY, _ent(), False),
+        (CONF_POWER_DOWN_ENTITY, _ent(), False),
+    ],
+    "sources_solar_history": [
+        (CONF_FORECAST_ENTRY, sel.ConfigEntrySelector(), False),
+        (CONF_FORECAST_REF_KWP, _num(0.1, 100, 0.1, "kWp"), False),
+        (CONF_CONSUMPTION_STAT, _TEXT, False),
+        (CONF_EV_STATS, _TEXT, False),
+        (CONF_HISTORY_DAYS, _num(14, 730, 1, "days"), False),
+    ],
+    "tariff": [
+        (CONF_CHEAP_START, _TIME, True), (CONF_CHEAP_END, _TIME, True),
+        (CONF_CHEAP_P, _num(-50, 100, 0.01, "p/kWh"), True),
+        (CONF_STANDARD_P, _num(0, 150, 0.01, "p/kWh"), True),
+        (CONF_EXPORT_P, _num(0, 100, 0.01, "p/kWh"), True),
+        (CONF_PU_IMPORT_P, _num(-50, 100, 0.01, "p/kWh"), True),
+        (CONF_PD_EXPORT_P, _num(0, 500, 0.01, "p/kWh"), True),
+        (CONF_PD_BONUS_P, _num(0, 500, 0.01, "p/kWh"), True),
+    ],
+    "hardware": [
+        (CONF_PV_KWP, _num(0, 50, 0.1, "kWp"), True),
+        (CONF_INVERTER_KW, _num(0.5, 50, 0.1, "kW"), True),
+        (CONF_PV_YIELD, _num(400, 1400, 10, "kWh/kWp/yr"), True),
+        (CONF_BATT_KWH, _num(0, 100, 0.1, "kWh"), True),
+        (CONF_BATT_KW, _num(0, 50, 0.1, "kW"), True),
+        (CONF_RTE, _num(0.5, 1.0, 0.01), True),
+        (CONF_RESERVE, _num(0, 50, 1, "%"), True),
+        (CONF_EXPORT_LIMIT, _num(0, 50, 0.01, "kW"), True),
+        (CONF_CYCLE_COST, _num(0, 50, 0.1, "p/kWh"), True),
+    ],
+    "finance": [
+        (CONF_PV_COST_FIXED, _num(0, 100000, 10, "£"), True), (CONF_PV_COST_KWP, _num(0, 5000, 10, "£/kWp"), True),
+        (CONF_BATT_COST_FIXED, _num(0, 100000, 10, "£"), True),
+        (CONF_BATT_COST_KWH, _num(0, 5000, 10, "£/kWh"), True),
+        (CONF_OTHER_COST, _num(0, 100000, 10, "£"), True),
+        (CONF_DEPOSIT, _num(0, 100000, 10, "£"), True), (CONF_APR, _num(0, 40, 0.1, "%"), True),
+        (CONF_TERM, _num(0, 300, 1, "months"), True),
+        (CONF_ESCALATION, _num(-5, 15, 0.1, "%/yr"), True), (CONF_PV_DEG, _num(0, 5, 0.1, "%/yr"), True),
+        (CONF_BATT_DEG, _num(0, 10, 0.1, "%/yr"), True), (CONF_DISCOUNT, _num(0, 15, 0.1, "%"), True),
+        (CONF_HORIZON, _num(5, 40, 1, "years"), True),
+    ],
+    "strategy": [
+        (CONF_STRATEGY, _choice(STRATEGIES), True), (CONF_MARGIN, _num(0, 60, 1, "%"), True),
+        (CONF_EXPORT_FROM, _TIME, True), (CONF_EXPORT_MARGIN, _num(0, 20, 0.1, "p/kWh"), True),
+        (CONF_ARBITRAGE, _BOOL, True), (CONF_BATT_EXPORT, _BOOL, True),
+    ],
+    "assumptions": [
+        (CONF_NIGHT_BASE, _num(0, 3, 0.05, "kW"), True),
+        (CONF_DAILY_HOUSE, _num(1, 60, 0.5, "kWh"), True), (CONF_DAILY_EV, _num(0, 120, 0.5, "kWh"), True),
+        (CONF_PD_PER_MONTH, _num(0, 30, 1), True), (CONF_PD_START_HOUR, _num(0, 23.5, 0.5, "h"), True),
+        (CONF_PD_HOURS, _num(0.5, 12, 0.5, "h"), True),
+        (CONF_PU_PER_MONTH, _num(0, 30, 1), True), (CONF_PU_START_HOUR, _num(0, 23.5, 0.5, "h"), True),
+        (CONF_PU_HOURS, _num(0.5, 12, 0.5, "h"), True),
+    ],
+}
+MENU = ["sources_live", "sources_octopus", "sources_solar_history", "hardware_preset", "hardware", "tariff_preset",
+        "tariff", "finance", "strategy", "assumptions", "done"]
+
+
+def _schema(step: str, current: dict) -> vol.Schema:
+    fields: dict = {}
+    for key, selector, required in STEPS[step]:
+        cur = current.get(key)
+        desc = {"suggested_value": cur} if cur not in (None, "", []) else None
+        marker = (vol.Required if required else vol.Optional)(key, **({"description": desc} if desc else {}),
+                                                              **({"default": cur} if required and cur is not None else {}))
+        fields[marker] = selector
+    return vol.Schema(fields)
+
+
+def _merge(step: str, opts: dict, user_input: dict) -> dict:
+    """Apply a submitted form; optional fields left empty are removed."""
+    out = dict(opts)
+    for key, _s, required in STEPS[step]:
+        if key in user_input:
+            out[key] = user_input[key]
+        elif not required:
+            out.pop(key, None)
+    return out
+
+
+class _FlowBase:
+    """Shared step handlers for both the initial setup and the options menu."""
+
+    opts: dict
+
+    def _form(self, step: str, errors: dict | None = None):
+        return self.async_show_form(step_id=step, data_schema=_schema(step, {**DEFAULTS, **self.opts}),
+                                    errors=errors or {})
+
+    async def _step(self, step: str, user_input, nxt):
+        if user_input is None:
+            return self._form(step)
+        self.opts = _merge(step, self.opts, user_input)
+        return await nxt()
+
+    async def _preset(self, step: str, table: dict, key: str, user_input, nxt):
+        if user_input is None:
+            schema = vol.Schema({vol.Required(key, default=self.opts.get(key, "custom")): _choice(preset_choices(table))})
+            return self.async_show_form(step_id=step, data_schema=schema)
+        name = user_input[key]
+        self.opts[key] = name
+        self.opts.update(apply_preset(table, name))
+        return await nxt()
+
+
+class EnergyTwinConfigFlow(_FlowBase, ConfigFlow, domain=DOMAIN):
+    VERSION = 1
+
+    def __init__(self) -> None:
+        self.opts: dict = {}
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        return EnergyTwinOptionsFlow()
+
+    async def async_step_user(self, user_input=None) -> ConfigFlowResult:
+        await self.async_set_unique_id(DOMAIN)
+        self._abort_if_unique_id_configured()
+        return await self._preset("user", HARDWARE_PRESETS, CONF_HW_PRESET, user_input, self.async_step_tariff_preset)
+
+    async def async_step_tariff_preset(self, user_input=None) -> ConfigFlowResult:
+        return await self._preset("tariff_preset", TARIFF_PRESETS, CONF_TARIFF_PRESET, user_input,
+                                  self.async_step_sources_live)
+
+    async def async_step_sources_live(self, user_input=None) -> ConfigFlowResult:
+        return await self._step("sources_live", user_input, self.async_step_sources_octopus)
+
+    async def async_step_sources_octopus(self, user_input=None) -> ConfigFlowResult:
+        return await self._step("sources_octopus", user_input, self.async_step_sources_solar_history)
+
+    async def async_step_sources_solar_history(self, user_input=None) -> ConfigFlowResult:
+        return await self._step("sources_solar_history", user_input, self._finish)
+
+    async def _finish(self) -> ConfigFlowResult:
+        return self.async_create_entry(title="Home Energy Twin", data={}, options=self.opts)
+
+
+class EnergyTwinOptionsFlow(_FlowBase, OptionsFlow):
+    """Menu-driven: change any section, then choose 'done'."""
+
+    def __init__(self) -> None:
+        self.opts: dict = {}
+
+    async def async_step_init(self, user_input=None) -> ConfigFlowResult:
+        if not self.opts:
+            self.opts = dict(self.config_entry.options)
+        return self.async_show_menu(step_id="init", menu_options=MENU)
+
+    async def _back(self) -> ConfigFlowResult:
+        return await self.async_step_init()
+
+    async def async_step_hardware_preset(self, user_input=None) -> ConfigFlowResult:
+        return await self._preset("hardware_preset", HARDWARE_PRESETS, CONF_HW_PRESET, user_input, self._back)
+
+    async def async_step_tariff_preset(self, user_input=None) -> ConfigFlowResult:
+        return await self._preset("tariff_preset", TARIFF_PRESETS, CONF_TARIFF_PRESET, user_input, self._back)
+
+    async def async_step_done(self, user_input=None) -> ConfigFlowResult:
+        return self.async_create_entry(title="", data=self.opts)
+
+
+def _make_step(name: str):
+    async def handler(self, user_input=None):
+        nxt = self._back if isinstance(self, EnergyTwinOptionsFlow) else self._finish
+        return await self._step(name, user_input, nxt)
+    return handler
+
+
+for _name in ("sources_live", "sources_octopus", "sources_solar_history", "hardware", "tariff", "finance", "strategy",
+              "assumptions"):
+    if not hasattr(EnergyTwinOptionsFlow, f"async_step_{_name}"):
+        setattr(EnergyTwinOptionsFlow, f"async_step_{_name}", _make_step(_name))
