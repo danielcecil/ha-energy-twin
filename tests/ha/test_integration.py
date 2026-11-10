@@ -673,3 +673,52 @@ async def test_system_cost_grant_and_finance_controls(hass: HomeAssistant):
     await hass.async_block_till_done()
     await c._async_annual()
     assert c.annual["finance"]["finance_mode"] == "loan" and c.annual["finance"]["effective_apr_pct"] == 6.9
+
+
+async def test_export_window_is_configured_and_reported(hass: HomeAssistant):
+    entry = await _setup(hass, strategy="optimised")
+    c = entry.runtime_data
+    st = c.strategy()
+    assert (st.export_from_min, st.export_until_min, st.event_export_anywhere) == (18 * 60, 23 * 60 + 30, True)
+    assert c.diag["battery_export_window"].startswith("18:00-23:30")
+    r = await hass.config_entries.options.async_init(entry.entry_id)
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "menu_planning"})
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "strategy"})
+    keys = {str(k) for k in r["data_schema"].schema}
+    assert {"export_from", "export_until", "event_export_anywhere"} <= keys
+    # the plan never exports from the battery in a cheap slot (here without any car load)
+    sl, res = c.plan.slots, c.plan.result
+    assert not [i for i in range(sl.n) if sl.cheap[i] and not sl.event[i] and res.export_kw[i] > 0.05 and res.battery_kw[i] < 0]
+
+
+async def test_live_battery_never_discharges_into_a_car(hass: HomeAssistant):
+    """CT clamps / firmware can't tell car from house, so battery discharge is blocked whenever a car draws power."""
+    hass.states.async_set("sensor.car_power", "7000", {"unit_of_measurement": "W"})
+    entry = await _setup(hass, strategy="rules", vehicles=[{"name": "Car", "mode": "offpeak", "power_entity": "sensor.car_power"}])
+    c = entry.runtime_data
+    hw, t = c.hardware(), dt_util.utcnow()
+    idx = c._plan_index(t)
+    c.soc = hw.emax * 0.8
+    c.plan.result.battery_kw[idx] = -4.0                      # force a plan that wants to discharge
+    c.plan.slots.cheap[idx] = False
+    # 1) car power measured at 7 kW -> no discharge, SoC untouched
+    c.last_tick = t - timedelta(seconds=60)
+    before = c.soc
+    c._step(t, hw, idx)
+    assert c._live["battery"] >= 0 and c.soc >= before - 1e-9, c._live
+    # 2) car draws nothing -> the same plan is allowed to discharge (proves the block above was the car)
+    hass.states.async_set("sensor.car_power", "0", {"unit_of_measurement": "W"})
+    c.last_tick = t - timedelta(seconds=60)
+    c._step(t + timedelta(seconds=1), hw, idx)
+    assert c._live["battery"] < 0
+    # 3) car power NOT measured, but the plan expects a car charging -> still blocked
+    entry2 = await _setup(hass, title="No sensor", strategy="rules")
+    c2 = entry2.runtime_data
+    hw2, i2 = c2.hardware(), c2._plan_index(t)
+    c2.soc = hw2.emax * 0.8
+    c2.plan.result.battery_kw[i2] = -4.0
+    c2.plan.slots.cheap[i2] = False
+    c2.plan.slots.ev_kw[i2] = 7.0
+    c2.last_tick = t - timedelta(seconds=60)
+    c2._step(t, hw2, i2)
+    assert c2._live["battery"] >= 0

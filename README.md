@@ -135,7 +135,10 @@ and edit. UK variants can differ from other markets.
    (or full if exporting later pays).
 2. **Daytime** - solar runs the house, surplus fills the battery, then exports.
 3. **Evening** - battery covers the house. If there's spare charge and
-   `export price x round-trip > cheap rate + margin`, the surplus is exported before the next recharge.
+   `export price x round-trip > cheap rate + margin`, the surplus is exported - **only inside the late-evening export
+   window** (default 18:00-23:30), before the next recharge. Never overnight while the grid is cheap: on a flat export
+   price the optimiser would otherwise charge, sell, recharge and sell again, roughly doubling battery cycles for little
+   gain. A paid Power Down event may override the window (switch that off to keep strictly to it).
 4. **Power Down** - charge beforehand, then discharge flat out into house + grid.
 
 ## Services

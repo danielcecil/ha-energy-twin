@@ -129,7 +129,8 @@ STEPS: dict[str, list[tuple[str, Any, bool]]] = {
     ],
     "strategy": [
         (CONF_STRATEGY, _choice(STRATEGIES), True), (CONF_MARGIN, _num(0, 60, 1, "%"), True),
-        (CONF_EXPORT_FROM, _TIME, True), (CONF_EXPORT_MARGIN, _num(0, 20, 0.1, "p/kWh"), True),
+        (CONF_EXPORT_FROM, _TIME, True), (CONF_EXPORT_UNTIL, _TIME, True), (CONF_EVENT_EXPORT, _BOOL, True),
+        (CONF_EXPORT_MARGIN, _num(0, 20, 0.1, "p/kWh"), True),
         (CONF_ARBITRAGE, _BOOL, True), (CONF_BATT_EXPORT, _BOOL, True),
     ],
     "assumptions": [

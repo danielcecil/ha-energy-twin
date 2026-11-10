@@ -51,13 +51,21 @@ class Hardware:
 class Strategy:
     name: str = "optimised"           # "rules" | "optimised"
     margin_pct: float = 15.0          # safety margin on expected evening demand
-    export_from_min: int = 16 * 60    # rules: earliest local time to export battery surplus
+    export_from_min: int = 18 * 60    # battery export window opens (local) - late evening
+    export_until_min: int = 23 * 60 + 30   # ...and closes (normally when the cheap window starts)
+    event_export_anywhere: bool = True     # a Power Down event may export outside that window
     export_margin_p: float = 1.0      # only export if it beats re-buying by this many pence
     arbitrage: bool = True            # allow charging from cheap grid purely to export
     allow_battery_export: bool = True
     # optimised: local times (minutes) at which the plan is re-solved from the actual state
     # (the live twin re-plans every few minutes; this mimics that in the annual run)
     replan_min: tuple = (6 * 60, 12 * 60, 16 * 60, 19 * 60)
+
+
+def in_export_window(tod_min: int, st: "Strategy") -> bool:
+    """Is this local time inside the battery export window? (handles a window that wraps midnight)"""
+    a, b = st.export_from_min, st.export_until_min
+    return (a <= tod_min < b) if a <= b else (tod_min >= a or tod_min < b)
 
 
 @dataclass(frozen=True)

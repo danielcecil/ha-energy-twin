@@ -217,6 +217,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
     def strategy(self, cfg: dict | None = None) -> Strategy:
         c = cfg or self.cfg
         return Strategy(name=c[CONF_STRATEGY], margin_pct=c[CONF_MARGIN], export_from_min=_mins(c[CONF_EXPORT_FROM]),
+                        export_until_min=_mins(c[CONF_EXPORT_UNTIL]), event_export_anywhere=bool(c[CONF_EVENT_EXPORT]),
                         export_margin_p=c[CONF_EXPORT_MARGIN], arbitrage=c[CONF_ARBITRAGE],
                         allow_battery_export=c[CONF_BATT_EXPORT])
 
@@ -432,6 +433,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "horizon_slots": len(starts), "live_price_entity": live_imp is not None,
             "live_pv_entity": live_pv is not None,
             "vehicles": self.ev_info,
+            "battery_export_window": f"{c[CONF_EXPORT_FROM][:5]}-{c[CONF_EXPORT_UNTIL][:5]}"
+                                     + (" (Power Down events may go outside it)" if c[CONF_EVENT_EXPORT] else ""),
             **self._fc_diag,
             "heat_pump": ({"gas_rate_p": round(hp.gas_unit_p, 2), "gas_standing_p_day": round(hp.gas_standing_p_day, 1),
                            "gas_rate_from": "sensor" if ha_data.price_p(self._state(c.get(CONF_GAS_RATE_ENTITY))) else "fixed number",
@@ -537,14 +540,19 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         real_house = house
         house = house + new
         r_plan = plan.battery_kw[idx]
-        r_req = follow(r_plan, sl, idx, house, ev, pv, sl.exp_house_kw[idx] + exp_new, pv_plan[idx])
+        # Power can't be sent to a car from the battery (CT clamps / inverter firmware can't tell them apart), so
+        # discharge is blocked whenever a car is drawing power. If no car power is measured, trust the plan's
+        # expectation (plugged-in car / smart-charge slot) rather than assuming it is off.
+        measured_ev = bool(ev_states)
+        ev_block = ev >= EV_ON_KW or (not measured_ev and sl.ev_kw[idx] >= EV_ON_KW)
+        r_req = follow(r_plan, sl, idx, house, ev, pv, sl.exp_house_kw[idx] + exp_new, pv_plan[idx], ev_block=ev_block)
         dt_s = (now - self.last_tick).total_seconds() if self.last_tick else 0.0
         self.last_tick = now
         h = dt_s / 3600.0 if 0 < dt_s <= MAX_GAP_S else 0.0       # real elapsed hours since the last tick
         self._track_vehicles(now, h)
         soc_before = self.soc
         # advance the virtual battery by the time that really passed (NOT a whole half-hour slot)
-        self.soc, r = settle(hw, self.soc, r_req if hw.battery_kwh > 0 else 0.0, ev >= EV_ON_KW,
+        self.soc, r = settle(hw, self.soc, r_req if hw.battery_kwh > 0 else 0.0, ev_block,
                              hw.discharge_cap(pv), dt=h or SLOT_H, step=h,
                              max_charge=charge_headroom(hw, house + ev - pv))
         grid = house + ev - pv + r

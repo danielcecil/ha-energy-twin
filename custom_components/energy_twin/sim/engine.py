@@ -5,7 +5,7 @@ Hard rule baked into the physics: the battery NEVER discharges while a car is ch
 """
 from __future__ import annotations
 
-from .models import EV_ON_KW, SLOT_H, Hardware, Result, Slots, Strategy
+from .models import EV_ON_KW, SLOT_H, Hardware, Result, Slots, Strategy, in_export_window
 
 DT = SLOT_H
 _EPS = 1e-9
@@ -54,6 +54,24 @@ def _slot_cost(hw: Hardware, grid: float, r: float, imp_p: float, exp_p: float, 
     return cost, exp
 
 
+def event_honoured(sl: Slots, st: Strategy, t: int) -> bool:
+    """Is slot t a Power Down event we act on (export beyond the house's own use)?"""
+    return sl.event[t] == "power_down" and st.event_export_anywhere
+
+
+def export_allowed(sl: Slots, st: Strategy, t: int) -> bool:
+    """May the battery send power to the GRID in slot t?
+
+    Only in the late-evening window and never in a cheap slot - exporting overnight while the grid is cheap just
+    cycles the battery again (charge at 7p, sell, recharge). A Power Down event can override.
+    """
+    if not st.allow_battery_export:
+        return False
+    if event_honoured(sl, st, t):
+        return True
+    return (not sl.cheap[t]) and in_export_window(sl.tod_min[t], st)
+
+
 # --------------------------------------------------------------------------- rules controller
 class _RulesCtx:
     """Pre-computed look-ahead for the rule-based controller (uses EXPECTED loads only)."""
@@ -66,6 +84,7 @@ class _RulesCtx:
         self.target = [0.0] * n        # stored kWh (above reserve) to reach by END of cheap block
         self.best_exp = [0.0] * n      # best export price available in the rest of this non-cheap block
         self.left = [0] * n            # non-cheap slots left in block (incl. this)
+        self.win_left = [0] * n        # export-window slots left in this stretch (incl. this)
         self.hold = [0.0] * n          # stored kWh to keep back for a later Power Down in this block
         hold_incl = [0.0] * (n + 1)
         self.next_cheap_p = [sl.import_p[-1] if n else 0.0] * n
@@ -88,7 +107,7 @@ class _RulesCtx:
                     self.target[t] = rng
             else:
                 nn = self.need[t + 1] if nxt_noncheap else 0.0
-                if sl.event[t] == "power_down":
+                if event_honoured(sl, st, t):
                     deficit = hw.discharge_cap(0.0) * DT / eta
                 else:
                     net = (sl.exp_house_kw[t] - exp_pv[t]) * DT
@@ -96,9 +115,11 @@ class _RulesCtx:
                 self.need[t] = min(rng, max(0.0, nn + deficit))
                 self.best_exp[t] = max(sl.export_p[t], self.best_exp[t + 1] if nxt_noncheap else 0.0)
                 self.left[t] = 1 + (self.left[t + 1] if nxt_noncheap else 0)
+                if export_allowed(sl, st, t):
+                    self.win_left[t] = 1 + (self.win_left[t + 1] if nxt_noncheap else 0)
                 after = hold_incl[t + 1] if nxt_noncheap else 0.0
                 self.hold[t] = after
-                hold_incl[t] = after + (hw.discharge_cap(0.0) * DT / eta if sl.event[t] == "power_down" else 0.0)
+                hold_incl[t] = after + (hw.discharge_cap(0.0) * DT / eta if event_honoured(sl, st, t) else 0.0)
             self.next_cheap_p[t] = nxt_cheap_p
 
 
@@ -110,7 +131,7 @@ def _rules_request(c: _RulesCtx, sl: Slots, hw: Hardware, st: Strategy, t: int, 
     ev_ = sl.event[t]
     if ev_ == "power_up":
         return hw.charge_kw
-    if ev_ == "power_down":
+    if event_honoured(sl, st, t):
         return -hw.discharge_cap(pv)
     if sl.cheap[t]:
         tgt = hw.emin + c.target[t]
@@ -125,11 +146,11 @@ def _rules_request(c: _RulesCtx, sl: Slots, hw: Hardware, st: Strategy, t: int, 
     if c.hold[t] > 0:                                  # keep charge back for a Power Down later today
         floor = hw.emin + min(hw.emax - hw.emin, c.hold[t])
         r = max(r, -max(0.0, soc - floor) * eta / DT)
-    if st.allow_battery_export and sl.tod_min[t] >= st.export_from_min:
+    if export_allowed(sl, st, t):
         price_ok = sl.export_p[t] * hw.round_trip_eff >= c.next_cheap_p[t] + st.export_margin_p
         surplus = soc - (hw.emin + c.need[t])
         if price_ok and surplus > 1e-6:
-            r -= surplus * eta / (DT * max(1, c.left[t]))
+            r -= surplus * eta / (DT * max(1, c.win_left[t]))
     return r
 
 
@@ -179,7 +200,7 @@ def plan_dp(sl: Slots, hw: Hardware, st: Strategy, soc0: float, pv: list[float],
             bad |= chg > max(0.0, hw.import_limit_kw - max(0.0, D)) + 1e-6   # main fuse
         if not sl.cheap[t]:
             bad |= chg > max(0.0, -D) + 1e-6          # only solar may charge outside cheap slots
-        if not st.allow_battery_export:
+        if not export_allowed(sl, st, t):          # late-evening window only (Power Down events excepted)
             bad |= dis > max(0.0, house - pv[t]) + 1e-6
         tot = np.where(bad, big, cost) + V[None, :]
         pol[t] = tot.argmin(axis=1)
@@ -220,10 +241,10 @@ def level_charging(r: list[float], sl: Slots) -> list[float]:
 
 
 def follow(r_plan: float, sl: Slots, t: int, house: float, ev: float, pv: float,
-           exp_house: float, exp_pv: float) -> float:
+           exp_house: float, exp_pv: float, ev_block: bool = False) -> float:
     """Execute a planned set-point against what is actually happening (reactive wrapper)."""
     D_house = house - pv
-    ev_on = ev >= EV_ON_KW
+    ev_on = ev >= EV_ON_KW or ev_block          # ev_block: a car we can't measure is expected to be charging
     if sl.event[t] == "power_up":
         return 1e9                                   # charge flat out; settle() clamps
     if r_plan > _EPS:
