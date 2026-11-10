@@ -274,11 +274,7 @@
           "fallback_annual_gas_kwh": "Typical annual gas (kWh)",
           "gas_unit_p": "Gas unit rate - fallback (p/kWh)",
           "gas_standing_p_day": "Gas standing charge - fallback (p/day)",
-          "gas_disconnect": "Disconnect gas afterwards",
-          "hp_cost": "Heat pump + tank installed (£)",
-          "hp_grant": "Grant (£)",
-          "induction_cost": "Induction hob (£)",
-          "hp_other_cost": "Other costs, e.g. radiators (£)"
+          "gas_disconnect": "Disconnect gas afterwards"
         },
         "data_description": {
           "boiler_eff_dhw": "Lower than heating: combis lose a lot on short draws.",
@@ -286,8 +282,7 @@
           "fallback_annual_gas_kwh": "Used until enough gas + temperature history exists.",
           "gas_unit_p": "Used only if no gas rate sensor is set (or it is unavailable).",
           "gas_standing_p_day": "Used only if no standing charge sensor is set.",
-          "gas_disconnect": "Counts the avoided standing charge as a saving.",
-          "hp_grant": "e.g. the Boiler Upgrade Scheme - check current eligibility and amount."
+          "gas_disconnect": "Counts the avoided standing charge as a saving."
         }
       },
       "tariff": {
@@ -335,14 +330,14 @@
       "finance": {
         "title": "Costs & finance",
         "data": {
-          "pv_cost_fixed": "Solar fixed cost (£)",
-          "pv_cost_per_kwp": "Solar cost per kWp (£)",
-          "battery_cost_fixed": "Battery fixed cost (£)",
-          "battery_cost_per_kwh": "Battery cost per kWh (£)",
-          "other_cost": "Other install costs (£)",
+          "system_cost": "System cost (£)",
+          "grant": "Grant (£)",
+          "finance_mode": "How you pay",
           "deposit": "Deposit (£)",
-          "apr_pct": "Finance APR (%)",
+          "finance_fee": "Arrangement fee (£)",
+          "apr_pct": "Loan interest rate - APR (%)",
           "term_months": "Finance term (months)",
+          "finance_monthly": "Fixed monthly payment (£/month)",
           "tariff_escalation_pct": "Tariff inflation (%/yr)",
           "pv_degradation_pct": "Solar degradation (%/yr)",
           "battery_degradation_pct": "Battery degradation (%/yr)",
@@ -350,8 +345,14 @@
           "horizon_years": "Analysis horizon (years)"
         },
         "data_description": {
-          "other_cost": "Scaffolding, consumer unit, EV-safe isolation, etc.",
-          "term_months": "0 = pay in cash."
+          "system_cost": "The whole installed price for this setup in one number: solar, battery, inverter, heat pump, induction hob, install - whatever this scenario includes.",
+          "grant": "Deducted from the system cost, e.g. the Boiler Upgrade Scheme. Check current eligibility and amount.",
+          "finance_mode": "Cash, a loan (interest rate over a term), or a fixed monthly payment as quoted (e.g. £149 a month for 120 months).",
+          "deposit": "Paid up front when financing.",
+          "finance_fee": "Paid up front when financing.",
+          "apr_pct": "Only used for 'Loan'. 0 = interest free.",
+          "term_months": "0 = pay in cash.",
+          "finance_monthly": "Only used for 'Fixed monthly payment'. The twin works out the interest rate you are really paying."
         }
       },
       "strategy": {
@@ -666,11 +667,23 @@
       "hp_capacity_kw": {
         "name": "Heat pump capacity"
       },
-      "pv_cost_per_kwp": {
-        "name": "Solar cost per kWp"
+      "system_cost": {
+        "name": "System cost"
       },
-      "battery_cost_per_kwh": {
-        "name": "Battery cost per kWh"
+      "grant": {
+        "name": "Grant"
+      },
+      "finance_deposit": {
+        "name": "Finance deposit"
+      },
+      "finance_apr": {
+        "name": "Loan interest rate"
+      },
+      "finance_term_months": {
+        "name": "Finance term"
+      },
+      "finance_monthly": {
+        "name": "Fixed monthly payment"
       },
       "power_down_per_month": {
         "name": "Assumed Power Downs per month"
@@ -691,6 +704,9 @@
       },
       "event_kind": {
         "name": "Event type"
+      },
+      "finance_mode": {
+        "name": "How you pay"
       }
     },
     "datetime": {

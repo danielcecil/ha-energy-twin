@@ -55,10 +55,6 @@ CONF_FALLBACK_GAS = "fallback_annual_gas_kwh"
 CONF_GAS_P = "gas_unit_p"
 CONF_GAS_STANDING = "gas_standing_p_day"
 CONF_GAS_DISCONNECT = "gas_disconnect"
-CONF_HP_COST = "hp_cost"
-CONF_HP_GRANT = "hp_grant"
-CONF_INDUCTION_COST = "induction_cost"
-CONF_HP_OTHER = "hp_other_cost"
 
 # ---- presets -------------------------------------------------------------------------------
 CONF_HW_PRESET = "hardware_preset"
@@ -86,11 +82,11 @@ CONF_EXPORT_LIMIT = "export_limit_kw"
 CONF_CYCLE_COST = "cycle_cost_p"
 
 # ---- costs / finance -----------------------------------------------------------------------
-CONF_PV_COST_FIXED = "pv_cost_fixed"
-CONF_PV_COST_KWP = "pv_cost_per_kwp"
-CONF_BATT_COST_FIXED = "battery_cost_fixed"
-CONF_BATT_COST_KWH = "battery_cost_per_kwh"
-CONF_OTHER_COST = "other_cost"
+CONF_SYSTEM_COST = "system_cost"                  # one installed price for the whole setup
+CONF_GRANT = "grant"                              # e.g. Boiler Upgrade Scheme, deducted from the system cost
+CONF_FIN_MODE = "finance_mode"
+CONF_FIN_FEE = "finance_fee"
+CONF_FIN_MONTHLY = "finance_monthly"
 CONF_DEPOSIT = "deposit"
 CONF_APR = "apr_pct"
 CONF_TERM = "term_months"
@@ -130,8 +126,7 @@ DEFAULTS: dict = {
     CONF_PV_KWP: 6.0, CONF_INVERTER_KW: 5.0, CONF_PV_YIELD: 950.0,
     CONF_BATT_KWH: 10.0, CONF_BATT_KW: 5.0, CONF_RTE: 0.90, CONF_RESERVE: 10.0,
     CONF_EXPORT_LIMIT: 3.68, CONF_CYCLE_COST: 0.0,
-    CONF_PV_COST_FIXED: 1500.0, CONF_PV_COST_KWP: 900.0,
-    CONF_BATT_COST_FIXED: 1500.0, CONF_BATT_COST_KWH: 350.0, CONF_OTHER_COST: 0.0,
+    CONF_SYSTEM_COST: 12000.0, CONF_GRANT: 0.0, CONF_FIN_MODE: "cash", CONF_FIN_FEE: 0.0, CONF_FIN_MONTHLY: 0.0,
     CONF_DEPOSIT: 0.0, CONF_APR: 0.0, CONF_TERM: 0,
     CONF_ESCALATION: 3.0, CONF_PV_DEG: 0.5, CONF_BATT_DEG: 2.0, CONF_DISCOUNT: 3.0, CONF_HORIZON: 20,
     CONF_STRATEGY: "optimised", CONF_MARGIN: 15.0, CONF_EXPORT_FROM: "16:00:00",
@@ -141,7 +136,6 @@ DEFAULTS: dict = {
     CONF_DHW_START: "04:00:00", CONF_HP_ELEC_KW: 3.0, CONF_HP_CAP_KW: 8.0, CONF_FLOW_C: 45.0, CONF_CARNOT: 0.42,
     CONF_BASE_TEMP: 15.5, CONF_BOILER_EFF_H: 0.85, CONF_BOILER_EFF_D: 0.72, CONF_COOK_GAS: 1.0, CONF_INDUCTION: 0.5,
     CONF_FALLBACK_GAS: 11500.0, CONF_GAS_P: 6.0, CONF_GAS_STANDING: 30.0, CONF_GAS_DISCONNECT: True,
-    CONF_HP_COST: 11000.0, CONF_HP_GRANT: 7500.0, CONF_INDUCTION_COST: 800.0, CONF_HP_OTHER: 0.0,
     CONF_NIGHT_BASE: 0.3, CONF_DAILY_HOUSE: 9.0, CONF_DAILY_EV: 15.0,
     CONF_PD_PER_MONTH: 0, CONF_PD_START_HOUR: 17, CONF_PD_HOURS: 1,
     CONF_PU_PER_MONTH: 0, CONF_PU_START_HOUR: 13, CONF_PU_HOURS: 2,

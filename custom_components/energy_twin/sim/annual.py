@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 
 from .engine import simulate
-from .finance import Costs, FinanceTerms, evaluate_finance
+from .finance import Costs, FinanceTerms, evaluate_finance  # noqa: F401 - re-exported for callers
 from .models import Hardware, Result, Slots, Strategy
 
 
@@ -90,29 +90,42 @@ def split_savings(a: AnnualResult) -> tuple[float, float]:
     return pv, total - pv
 
 
-def sweep(sl_for: "callable", hw: Hardware, st: Strategy, chunk_tod_min: int, costs: Costs,
-          terms: FinanceTerms, batteries: list[float], arrays: list[float], inverters: list[float] | None = None,
-          baseline_with_new: bool = False, hp_saving: float = 0.0) -> list[dict]:
-    """Evaluate every combination. `sl_for(yield)` returns the year's Slots (cached by caller)."""
+def sweep(sl_for: "callable", hw: Hardware, st: Strategy, chunk_tod_min: int, batteries: list[float],
+          arrays: list[float], inverters: list[float] | None = None, baseline_with_new: bool = False,
+          hp_saving: float = 0.0) -> list[dict]:
+    """Evaluate every size combination. Ranked by annual saving, with the marginal gain of each step up.
+
+    There is no price here on purpose: one setup has one system cost. The marginal columns let you judge
+    "is +5 kWh of battery worth £X more?" against your own quotes.
+    """
     sl = sl_for(hw.pv_annual_yield)
-    rows = []
+    rows: list[dict] = []
     for kwp in arrays:
         for kwh in batteries:
             for inv in inverters or [hw.inverter_kw]:
-                h = replace(hw, pv_kwp=kwp, battery_kwh=kwh, inverter_kw=inv)
                 if kwp == 0 and kwh == 0:
                     continue
+                h = replace(hw, pv_kwp=kwp, battery_kwh=kwh, inverter_kw=inv)
                 a = evaluate(sl, h, st, chunk_tod_min, attribution=False, baseline_with_new=baseline_with_new)
                 f = 365.0 / a.days
-                capex = costs.total(kwp, kwh)
-                fin = evaluate_finance(capex, a.saving_gbp * f, 0.0, terms, hp_saving)
                 rows.append({
                     "pv_kwp": kwp, "battery_kwh": kwh, "inverter_kw": inv,
-                    "capex": round(capex), "saving_year1": round(a.saving_gbp * f + hp_saving, 2),
-                    "payback_years": fin["payback_years"], "net_gain": fin["net_gain_horizon"],
-                    "npv": fin["npv"], "monthly_net": fin["monthly_net_cashflow"],
+                    "saving_year1": round(a.saving_gbp * f + hp_saving, 2),
                     "import_kwh": round(a.import_kwh * f), "export_kwh": round(a.export_kwh * f),
-                    "cycles": round(a.cycles * f),
+                    "solar_kwh": round(a.pv_kwh * f), "cycles": round(a.cycles * f),
+                    "peak_import_kw": round(a.peak_import_kw, 1),
                 })
-    rows.sort(key=lambda r: r["npv"], reverse=True)
+    by = {(r["pv_kwp"], r["battery_kwh"], r["inverter_kw"]): r for r in rows}
+    for r in rows:
+        prev_b = max((b for (p, b, i) in by if p == r["pv_kwp"] and i == r["inverter_kw"] and b < r["battery_kwh"]), default=None)
+        prev_a = max((p for (p, b, i) in by if b == r["battery_kwh"] and i == r["inverter_kw"] and p < r["pv_kwp"]), default=None)
+        if prev_b is not None:
+            d = r["saving_year1"] - by[(r["pv_kwp"], prev_b, r["inverter_kw"])]["saving_year1"]
+            r["battery_step_gain"] = round(d, 2)
+            r["battery_gain_per_kwh"] = round(d / (r["battery_kwh"] - prev_b), 1)
+        if prev_a is not None:
+            d = r["saving_year1"] - by[(prev_a, r["battery_kwh"], r["inverter_kw"])]["saving_year1"]
+            r["array_step_gain"] = round(d, 2)
+            r["array_gain_per_kwp"] = round(d / (r["pv_kwp"] - prev_a), 1)
+    rows.sort(key=lambda r: r["saving_year1"], reverse=True)
     return rows

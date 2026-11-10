@@ -187,15 +187,6 @@ async def test_multiple_scenarios(hass: HomeAssistant):
         "end": (now + timedelta(hours=4)).isoformat()}, blocking=True)
     await hass.async_block_till_done()
     assert "power_down" in a.runtime_data.plan.slots.event and "power_down" in b.runtime_data.plan.slots.event
-    # the dashboard's Compare tab discovers both scenarios and renders a table
-    import pathlib, yaml
-    from homeassistant.helpers.template import Template
-    dash = yaml.safe_load(pathlib.Path("dashboard/energy_twin_dashboard.yaml").read_text())
-    cards = next(v for v in dash["views"] if v["path"] == "compare")["cards"]
-    out = Template(cards[0]["content"], hass).async_render()
-    assert "**Big battery**" in out and "**Home Energy Twin**" in out
-    rows = [l for l in out.splitlines() if l.startswith("| **")]
-    assert len(rows) == 2
     # targeted service
     await hass.services.async_call(DOMAIN, "reset_twin", {"scenario": "Big battery"}, blocking=True)
 
@@ -338,7 +329,7 @@ async def test_heat_pump_and_main_fuse(hass: HomeAssistant):
     a = c.annual
     h = a["heat"]
     assert h["gas_kwh_displaced"] > 8000 and h["net_hp_saving"] == a["hp_saving"]
-    assert a["finance"]["capex"] >= 11000 + 800 - 7500
+    assert a["finance"]["capex"] == 12000                                   # the one system cost (no grant set)
     st = hass.states.get("sensor.home_energy_twin_annual_heat_pump_saving")
     assert float(st.state) == a["hp_saving"] and st.attributes["scop_space"] > 2
     import pathlib, yaml
@@ -599,3 +590,86 @@ async def test_old_text_ev_stats_setting_still_loads(hass: HomeAssistant):
     entry = await _setup(hass, ev_stats="sensor.car_a_energy, sensor.car_b_energy", consumption_stat="sensor.house_kwh")
     await entry.runtime_data._async_load_history()          # a comma-separated string from an older version must not crash
     assert entry.runtime_data.profile is not None
+
+
+def _tables(text: str) -> list[list[str]]:
+    """Contiguous blocks of markdown table lines."""
+    blocks, cur = [], []
+    for line in text.splitlines():
+        if line.startswith("|"):
+            cur.append(line)
+        elif cur:
+            blocks.append(cur)
+            cur = []
+    return blocks + ([cur] if cur else [])
+
+
+async def test_compare_tab_for_three_setups(hass: HomeAssistant):
+    import pathlib, yaml
+    from homeassistant.helpers.template import Template
+    hass.states.async_set("sensor.gas_rate", "0.06", {"unit_of_measurement": "GBP/kWh"})
+    a = await _setup(hass, title="Today's plan", strategy="rules")
+    b = await _setup(hass, title="Big battery", strategy="rules", battery_kwh=20, pv_kwp=8)
+    c = await _setup(hass, title="Heat pump + kit", strategy="rules", hp_enabled=True, gas_rate_entity="sensor.gas_rate")
+    for e in (a, b, c):
+        await e.runtime_data._async_annual()
+    dash = yaml.safe_load(pathlib.Path("dashboard/energy_twin_dashboard.yaml").read_text())
+    cards = next(v for v in dash["views"] if v["path"] == "compare")["cards"]
+    out = {x.get("title") or "howto": Template(x["content"], hass).async_render() for x in cards}
+    names = ("Today's plan", "Big battery", "Heat pump + kit")
+
+    glance = out["At a glance"]
+    for tag in ("Best long-term value", "Biggest saving a year", "Fastest payback", "Best monthly cashflow"):
+        assert tag in glance, glance
+    assert any(n in glance for n in names)
+
+    bills = out["Your annual energy bill: today vs each setup"]
+    assert "Today (do nothing)" in bills and all(f"**{n}**" in bills for n in names)
+    ra, rb, rc = (e.runtime_data.annual for e in (a, b, c))
+    # the 'do nothing' bill is one number; every setup's saving is bill_today - bill_with
+    assert ra["bill_today"] == rb["bill_today"] == rc["bill_today"]
+    for r in (ra, rb, rc):
+        assert r["bill_today"] - r["bill_with"] == pytest.approx(r["saving_year1"], abs=0.05)
+    assert rc["gas_with"] == 0 and ra["gas_with"] == ra["gas_today"]                  # only the heat pump setup drops gas
+    assert "█" in bills
+
+    race = out["Payback race: cumulative net position"]
+    assert "✅" in race or "❌" in race and all(n in race for n in names)
+    assert "🏆" in out["Month by month saving (🏆 = best that month)"]
+    assert "Solar generated" in out["Energy flows per year"]
+    assert "Heat pump" in out["Where the saving comes from"] and "—" in out["Where the saving comes from"]
+
+    # every table is well-formed: header, separator, rows, same number of columns throughout, no stray blank lines
+    for title, text in out.items():
+        assert "Error" not in text and "None" not in text.replace("None yet", ""), (title, text[:300])
+        for t in _tables(text):
+            assert len(t) >= 3 and set(t[1].replace("|", "").replace(":", "").replace("-", "").strip()) <= {""}, (title, t[:2])
+            cols = {l.count("|") for l in t}
+            assert len(cols) == 1, (title, cols, t)
+
+
+async def test_system_cost_grant_and_finance_controls(hass: HomeAssistant):
+    entry = await _setup(hass, strategy="rules")
+    c = entry.runtime_data
+    await c._async_annual()
+    assert c.annual["finance"]["capex"] == 12000 and c.annual["finance"]["finance_mode"] == "cash"
+    svc = hass.services.async_call
+    await svc("number", "set_value", {"entity_id": "number.home_energy_twin_system_cost", "value": 15000}, blocking=True)
+    await svc("number", "set_value", {"entity_id": "number.home_energy_twin_grant", "value": 3000}, blocking=True)
+    await svc("select", "select_option", {"entity_id": "select.home_energy_twin_how_you_pay",
+                                          "option": "Fixed monthly payment"}, blocking=True)
+    await svc("number", "set_value", {"entity_id": "number.home_energy_twin_fixed_monthly_payment", "value": 120}, blocking=True)
+    await svc("number", "set_value", {"entity_id": "number.home_energy_twin_finance_term", "value": 120}, blocking=True)
+    await hass.async_block_till_done()
+    await c._async_annual()
+    f = c.annual["finance"]
+    assert f["capex"] == 12000 and f["finance_mode"] == "fixed_monthly" and f["monthly_payment"] == 120
+    assert f["total_paid_finance"] == 14400 and f["effective_apr_pct"] is not None and f["cost_of_finance"] > 0
+    sens = hass.states.get("sensor.home_energy_twin_annual_saving").attributes
+    assert sens["effective_apr_pct"] == f["effective_apr_pct"] and sens["finance_mode"] == "fixed_monthly"
+    # a quoted loan: interest rate over a term
+    await svc("select", "select_option", {"entity_id": "select.home_energy_twin_how_you_pay", "option": "Loan (interest rate)"}, blocking=True)
+    await svc("number", "set_value", {"entity_id": "number.home_energy_twin_loan_interest_rate", "value": 6.9}, blocking=True)
+    await hass.async_block_till_done()
+    await c._async_annual()
+    assert c.annual["finance"]["finance_mode"] == "loan" and c.annual["finance"]["effective_apr_pct"] == 6.9

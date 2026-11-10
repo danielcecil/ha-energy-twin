@@ -105,7 +105,8 @@ def _hp_economics(sl: Slots, hp: "heatm.HeatParams", f: float) -> dict:
 
 
 def annual_report(sl: Slots, hw: Hardware, st: Strategy, tariff: TariffConfig, costs: Costs,
-                  terms: FinanceTerms, attribution: bool = True, heat_p: "heatm.HeatParams | None" = None) -> dict:
+                  terms: FinanceTerms, attribution: bool = True, heat_p: "heatm.HeatParams | None" = None,
+                  tz: ZoneInfo | None = None, gas_model: "heatm.GasModel | None" = None) -> dict:
     has_hp = bool(sl.heat) and heat_p is not None and heat_p.enabled
     a = annual.evaluate(sl, hw, st, tariff.cheap_start_min, attribution=attribution, baseline_with_new=has_hp)
     f = 365.0 / a.days
@@ -114,7 +115,21 @@ def annual_report(sl: Slots, hw: Hardware, st: Strategy, tariff: TariffConfig, c
     hp_sav = econ["net_hp_saving"] if econ else 0.0
     capex = costs.total(hw.pv_kwp, hw.battery_kwh)
     fin = evaluate_finance(capex, pv_sav, batt_sav, terms, hp_sav)
+    # the whole annual bill (electricity + gas): today vs with this setup - the easiest thing to compare
+    elec_today = sum((sl.house_kw[i] + sl.ev_kw[i]) * 0.5 * sl.import_p[i] for i in range(sl.n)) / 100.0 * f
+    elec_with = a.scenario_gbp * f
+    bills: dict = {"elec_today": round(elec_today, 2), "elec_with": round(elec_with, 2),
+                   "bill_today": None, "bill_with": None, "gas_today": None, "gas_with": None}
+    if heat_p is not None and gas_model is not None and tz is not None:
+        gas_kwh = heatm.annual_gas_kwh(sl.start, sl.tod_min, tz, heat_p, gas_model)
+        standing = heat_p.gas_standing_p_day * 365 / 100.0
+        gas_today = gas_kwh * heat_p.gas_unit_p / 100.0 + standing
+        gas_with = (0.0 if heat_p.gas_disconnect else standing) if has_hp else gas_today
+        bills.update({"gas_today": round(gas_today, 2), "gas_with": round(gas_with, 2), "gas_kwh_today": round(gas_kwh),
+                      "bill_today": round(elec_today + gas_today, 2), "bill_with": round(elec_with + gas_with, 2),
+                      "gas_is_estimate": gas_model.source != "history"})
     return {
+        **bills,
         "saving_year1": round(a.saving_gbp * f + hp_sav, 2),
         "hp_saving": round(hp_sav, 2),
         "heat": ({**sl.heat, **econ} if econ else None),
@@ -136,11 +151,10 @@ def annual_report(sl: Slots, hw: Hardware, st: Strategy, tariff: TariffConfig, c
     }
 
 
-def run_sweep(sl: Slots, hw: Hardware, st: Strategy, tariff: TariffConfig, costs: Costs, terms: FinanceTerms,
-              batteries: list[float], arrays: list[float], inverters: list[float] | None,
+def run_sweep(sl: Slots, hw: Hardware, st: Strategy, tariff: TariffConfig, batteries: list[float],
+              arrays: list[float], inverters: list[float] | None,
               heat_p: "heatm.HeatParams | None" = None) -> list[dict]:
     has_hp = bool(sl.heat) and heat_p is not None and heat_p.enabled
     hp_sav = _hp_economics(sl, heat_p, 1.0)["net_hp_saving"] if has_hp else 0.0
-    return annual.sweep(lambda _y: sl, hw, st, tariff.cheap_start_min, costs, terms,
-                        batteries=batteries, arrays=arrays, inverters=inverters,
+    return annual.sweep(lambda _y: sl, hw, st, tariff.cheap_start_min, batteries, arrays, inverters,
                         baseline_with_new=has_hp, hp_saving=hp_sav)

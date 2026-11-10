@@ -25,13 +25,13 @@ def year(with_hp: bool, ev_kwh=12.0):
 def test_heat_pump_economics_are_gas_avoided_minus_extra_grid_cost():
     hw, sl = year(True)
     assert sl.new_kw and sum(sl.new_kw) > 0 and sl.heat["gas_kwh_displaced"] > 9000
-    rep = pipeline.annual_report(sl, hw, Strategy(name="rules"), CFG, Costs(hp=7000), FinanceTerms(), heat_p=HP)
+    rep = pipeline.annual_report(sl, hw, Strategy(name="rules"), CFG, Costs(system=17000, grant=7500), FinanceTerms(), heat_p=HP)
     h = rep["heat"]
     assert h["net_hp_saving"] == pytest.approx(h["gas_cost_avoided"] + h["gas_standing_avoided"] - h["grid_cost_nokit"], abs=0.02)
     assert h["gas_cost_avoided"] == pytest.approx(h["gas_kwh_displaced"] * HP.gas_unit_p / 100, abs=0.02)
     # total = kit saving (given the heat pump's load) + heat pump package
     assert rep["saving_year1"] == pytest.approx(rep["pv_saving"] + rep["battery_saving"] + rep["hp_saving"], abs=0.05)
-    assert rep["finance"]["capex"] >= 7000                             # heat pump cost is in the outlay
+    assert rep["finance"]["capex"] == 9500                              # one system cost less the grant
     assert h["cheap_share_pct"] > 8
 
 

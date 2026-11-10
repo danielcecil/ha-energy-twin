@@ -222,15 +222,14 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
 
     def costs(self, c: dict | None = None) -> Costs:
         c = c or self.cfg
-        hp = (max(0.0, c[CONF_HP_COST] + c[CONF_INDUCTION_COST] + c[CONF_HP_OTHER] - c[CONF_HP_GRANT])
-              if c[CONF_HP_ENABLED] else 0.0)
-        return Costs(c[CONF_PV_COST_FIXED], c[CONF_PV_COST_KWP], c[CONF_BATT_COST_FIXED], c[CONF_BATT_COST_KWH],
-                     c[CONF_OTHER_COST], hp)
+        return Costs(system=float(c[CONF_SYSTEM_COST]), grant=float(c[CONF_GRANT]))
 
     def terms(self, c: dict | None = None) -> FinanceTerms:
         c = c or self.cfg
-        return FinanceTerms(c[CONF_DEPOSIT], c[CONF_APR], int(c[CONF_TERM]), c[CONF_ESCALATION], c[CONF_PV_DEG],
-                            c[CONF_BATT_DEG], c[CONF_DISCOUNT], int(c[CONF_HORIZON]))
+        term = int(c[CONF_TERM])
+        mode = c.get(CONF_FIN_MODE) or ("loan" if term > 0 else "cash")
+        return FinanceTerms(mode, c[CONF_DEPOSIT], c[CONF_FIN_FEE], c[CONF_APR], term, c[CONF_FIN_MONTHLY],
+                            c[CONF_ESCALATION], c[CONF_PV_DEG], c[CONF_BATT_DEG], c[CONF_DISCOUNT], int(c[CONF_HORIZON]))
 
     # ------------------------------------------------------------------ lifecycle
     async def async_setup(self) -> None:
@@ -754,7 +753,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
                 costs, terms = self.costs(c), self.terms(c)
 
                 def job() -> dict:
-                    return pipeline.annual_report(self._year(c), hw, st, tariff, costs, terms, heat_p=self.heat_params(c))
+                    return pipeline.annual_report(self._year(c), hw, st, tariff, costs, terms, heat_p=self.heat_params(c),
+                                              tz=self.tz, gas_model=self.gas_model)
 
                 self.annual = await self.hass.async_add_executor_job(job)
                 self.annual["history_days"] = self.hist[2]
@@ -779,7 +779,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.async_set_updated_data(self._snapshot(dt_util.utcnow(), hw, self._live))
 
         def job() -> list[dict]:
-            return pipeline.run_sweep(self._year(c), hw, st, tariff, costs, terms, batteries, arrays, inverters,
+            return pipeline.run_sweep(self._year(c), hw, st, tariff, batteries, arrays, inverters,
                                       heat_p=self.heat_params(c))
 
         try:

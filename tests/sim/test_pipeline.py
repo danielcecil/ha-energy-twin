@@ -49,7 +49,7 @@ def test_full_year_history_used_directly_and_report_sane():
                             today=date(2026, 11, 9), pd=(2, 17, 1), pu=(1, 13, 2))
     assert sl.start[0].astimezone(TZ).date() == last - timedelta(days=364)
     assert any(e == "power_down" for e in sl.event) and any(e == "power_up" for e in sl.event)
-    rep = pipeline.annual_report(sl, hw, Strategy(name="rules"), CFG, Costs(), FinanceTerms(apr_pct=6.9, term_months=60))
+    rep = pipeline.annual_report(sl, hw, Strategy(name="rules"), CFG, Costs(system=12000), FinanceTerms(mode="loan", apr_pct=6.9, term_months=60))
     assert rep["saving_year1"] > 500
     assert rep["finance"]["monthly_payment"] > 0
     assert rep["pv_saving"] + rep["battery_saving"] == pytest.approx(rep["saving_year1"], abs=0.05)

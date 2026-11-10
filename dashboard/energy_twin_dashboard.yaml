@@ -4,52 +4,332 @@
 # Charts need "apexcharts-card" from HACS (Frontend). Everything else is core cards.
 title: Energy Twin
 views:
-  # ───────────────────────────── COMPARE SCENARIOS ─────────────────────────────
+  # ───────────────────────────── COMPARE SETUPS ─────────────────────────────
   # Auto-discovers every Home Energy Twin scenario - nothing to edit when you add one.
   - title: Compare
     path: compare
     icon: mdi:scale-balance
     cards:
       - type: markdown
-        title: Scenarios ranked by net present value
+        title: At a glance
         content: |
-          {% set ns = namespace(rows=[]) %}
-          {% for e in integration_entities('energy_twin') | select('match', 'sensor\\..*_annual_saving$') | list %}
-          {% set ns.rows = ns.rows + [dict(
-            name=state_attr(e, 'scenario') or e,
-            kwh=state_attr(e, 'battery_kwh'), kwp=state_attr(e, 'pv_kwp'), inv=state_attr(e, 'inverter_kw'),
-            capex=state_attr(e, 'capex') | float(0), saving=states(e) | float(0),
-            payback=state_attr(e, 'payback_years'), net=state_attr(e, 'monthly_net_cashflow') | float(0),
-            npv=state_attr(e, 'npv') | float(0), n10=state_attr(e, 'net_10y') | float(0),
-            month=state_attr(e, 'ledger_month'), total=state_attr(e, 'ledger_total')
-          )] %}
+          {%- macro bar(v, mx, n=16) -%}{{ '█' * ((v / mx * n) | round(0) | int) if mx > 0 and v > 0 else '' }}{%- endmacro -%}
+          {%- macro gbp(v) -%}{{ '-' if v < 0 else '' }}£{{ '{:,.0f}'.format(v | abs) }}{%- endmacro -%}
+          {%- set ns = namespace(rows=[]) -%}
+          {%- for e in integration_entities('energy_twin') | select('match', 'sensor\\..*_annual_saving$') | list -%}
+          {%- if states(e) not in ['unknown', 'unavailable'] -%}
+          {%- set ns.rows = ns.rows + [dict(
+            e=e, name=state_attr(e, 'scenario') or e, saving=states(e) | float(0),
+            npv=state_attr(e, 'npv') | float(0), payback=state_attr(e, 'payback_years') | float(99),
+            net=state_attr(e, 'monthly_net_cashflow') | float(0), capex=state_attr(e, 'capex') | float(0),
+            n10=state_attr(e, 'net_10y') | float(0), cum=state_attr(e, 'cumulative_by_year') or [],
+            monthly=state_attr(e, 'monthly') or [], kwh=state_attr(e, 'battery_kwh'), kwp=state_attr(e, 'pv_kwp'),
+            pv=state_attr(e, 'pv_saving') | float(0), bat=state_attr(e, 'battery_saving') | float(0),
+            hp=state_attr(e, 'hp_saving') | float(0), bill_today=state_attr(e, 'bill_today') | float(0),
+            bill_with=state_attr(e, 'bill_with') | float(0), elec_with=state_attr(e, 'elec_with') | float(0),
+            gas_with=state_attr(e, 'gas_with') | float(0), elec_today=state_attr(e, 'elec_today') | float(0),
+            gas_today=state_attr(e, 'gas_today') | float(0), est=state_attr(e, 'gas_is_estimate'),
+            gen=state_attr(e, 'pv_generation_kwh') | float(0), imp=state_attr(e, 'import_kwh') | float(0),
+            exp=state_attr(e, 'export_kwh') | float(0), cyc=state_attr(e, 'battery_cycles') | float(0),
+            gchg=state_attr(e, 'grid_charge_kwh') | float(0), hpkwh=state_attr(e, 'hp_electricity_kwh') | float(0),
+            month=state_attr(e, 'ledger_month') | float(0), total=state_attr(e, 'ledger_total') | float(0)
+          )] -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- set rows = ns.rows -%}
+          {% set cands = rows | selectattr('saving', 'gt', 0) | list %}
+          {% if cands | length > 1 %}
+          {% set a = cands | sort(attribute='npv', reverse=true) | first %}
+          {% set b = cands | sort(attribute='saving', reverse=true) | first %}
+          {% set c = cands | sort(attribute='payback') | first %}
+          {% set d = cands | sort(attribute='net', reverse=true) | first %}
+          🏆 **Best long-term value:** {{ a.name }} - {{ gbp(a.npv) }} net present value
+          ⚡ **Biggest saving a year:** {{ b.name }} - {{ gbp(b.saving) }}
+          ⏱ **Fastest payback:** {{ c.name }} - {{ (c.payback | round(1) ~ ' years') if c.payback < 99 else 'not within the horizon' }}
+          💷 **Best monthly cashflow:** {{ d.name }} - {{ '+' if d.net >= 0 else '-' }}£{{ '{:,.0f}'.format(d.net | abs) }} a month after any finance payments
+          {% elif cands | length == 1 %}
+          Only **{{ cands[0].name }}** saves money so far. Add another setup (below) to compare.
+          {% elif rows | length > 1 %}
+          None of the setups saves money yet - check the system costs and kit sizes.
+          {% else %}
+          The yearly model takes a few seconds after start-up - nothing to compare yet.
+          {% endif %}
+      - type: markdown
+        title: "Your annual energy bill: today vs each setup"
+        content: |
+          {%- macro bar(v, mx, n=16) -%}{{ '█' * ((v / mx * n) | round(0) | int) if mx > 0 and v > 0 else '' }}{%- endmacro -%}
+          {%- macro gbp(v) -%}{{ '-' if v < 0 else '' }}£{{ '{:,.0f}'.format(v | abs) }}{%- endmacro -%}
+          {%- set ns = namespace(rows=[]) -%}
+          {%- for e in integration_entities('energy_twin') | select('match', 'sensor\\..*_annual_saving$') | list -%}
+          {%- if states(e) not in ['unknown', 'unavailable'] -%}
+          {%- set ns.rows = ns.rows + [dict(
+            e=e, name=state_attr(e, 'scenario') or e, saving=states(e) | float(0),
+            npv=state_attr(e, 'npv') | float(0), payback=state_attr(e, 'payback_years') | float(99),
+            net=state_attr(e, 'monthly_net_cashflow') | float(0), capex=state_attr(e, 'capex') | float(0),
+            n10=state_attr(e, 'net_10y') | float(0), cum=state_attr(e, 'cumulative_by_year') or [],
+            monthly=state_attr(e, 'monthly') or [], kwh=state_attr(e, 'battery_kwh'), kwp=state_attr(e, 'pv_kwp'),
+            pv=state_attr(e, 'pv_saving') | float(0), bat=state_attr(e, 'battery_saving') | float(0),
+            hp=state_attr(e, 'hp_saving') | float(0), bill_today=state_attr(e, 'bill_today') | float(0),
+            bill_with=state_attr(e, 'bill_with') | float(0), elec_with=state_attr(e, 'elec_with') | float(0),
+            gas_with=state_attr(e, 'gas_with') | float(0), elec_today=state_attr(e, 'elec_today') | float(0),
+            gas_today=state_attr(e, 'gas_today') | float(0), est=state_attr(e, 'gas_is_estimate'),
+            gen=state_attr(e, 'pv_generation_kwh') | float(0), imp=state_attr(e, 'import_kwh') | float(0),
+            exp=state_attr(e, 'export_kwh') | float(0), cyc=state_attr(e, 'battery_cycles') | float(0),
+            gchg=state_attr(e, 'grid_charge_kwh') | float(0), hpkwh=state_attr(e, 'hp_electricity_kwh') | float(0),
+            month=state_attr(e, 'ledger_month') | float(0), total=state_attr(e, 'ledger_total') | float(0)
+          )] -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- set rows = ns.rows -%}
+          {% set ref = rows | selectattr('bill_today', 'gt', 0) | list %}
+          {% if ref %}
+          {% set today = ref[0] %}
+          | Setup | Electricity | Gas | **Total / year** | vs today | |
+          |---|--:|--:|--:|--:|---|
+          | **Today (do nothing)** | {{ gbp(today.elec_today) }} | {{ gbp(today.gas_today) }} | **{{ gbp(today.bill_today) }}** | | {{ bar(today.bill_today, today.bill_today, 20) }} |
+          {% for r in ref | sort(attribute='bill_with') -%}
+          | **{{ r.name }}** | {{ gbp(r.elec_with) }} | {{ gbp(r.gas_with) }} | **{{ gbp(r.bill_with) }}** | {{ 'no change' if (r.bill_today - r.bill_with) | abs < 1 else (('▼ ' if r.bill_with < r.bill_today else '▲ ') ~ gbp((r.bill_today - r.bill_with) | abs) ~ ' (' ~ ((100 * (r.bill_today - r.bill_with) / r.bill_today) | abs | round(0) | int) ~ '%)') }} | {{ bar(r.bill_with, today.bill_today, 20) }} |
           {% endfor %}
-          {% if ns.rows %}
-          | Scenario | kWh | kWp | Inv kW | Outlay | Saving/yr | Payback | Net/month | 10-yr net | NPV |
-          |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
-          {% for r in ns.rows | sort(attribute='npv', reverse=true) -%}
-          | **{{ r.name }}** | {{ r.kwh }} | {{ r.kwp }} | {{ r.inv }} | £{{ r.capex | round(0) }} | £{{ r.saving | round(0) }} | {{ r.payback or '—' }} y | £{{ r.net | round(0) }} | £{{ r.n10 | round(0) }} | £{{ r.npv | round(0) }} |
+
+          *Electricity is your bill after solar, battery, car and heat pump; a negative number means export income exceeds what you buy.
+          {% if today.est %}The gas bill is an estimate for a typical home until gas and temperature history is available (set the gas sensors under Heat pump data).{% endif %}*
+          {% endif %}
+      - type: markdown
+        title: Scoreboard (ranked by value over the horizon)
+        content: |
+          {%- macro bar(v, mx, n=16) -%}{{ '█' * ((v / mx * n) | round(0) | int) if mx > 0 and v > 0 else '' }}{%- endmacro -%}
+          {%- macro gbp(v) -%}{{ '-' if v < 0 else '' }}£{{ '{:,.0f}'.format(v | abs) }}{%- endmacro -%}
+          {%- set ns = namespace(rows=[]) -%}
+          {%- for e in integration_entities('energy_twin') | select('match', 'sensor\\..*_annual_saving$') | list -%}
+          {%- if states(e) not in ['unknown', 'unavailable'] -%}
+          {%- set ns.rows = ns.rows + [dict(
+            e=e, name=state_attr(e, 'scenario') or e, saving=states(e) | float(0),
+            npv=state_attr(e, 'npv') | float(0), payback=state_attr(e, 'payback_years') | float(99),
+            net=state_attr(e, 'monthly_net_cashflow') | float(0), capex=state_attr(e, 'capex') | float(0),
+            n10=state_attr(e, 'net_10y') | float(0), cum=state_attr(e, 'cumulative_by_year') or [],
+            monthly=state_attr(e, 'monthly') or [], kwh=state_attr(e, 'battery_kwh'), kwp=state_attr(e, 'pv_kwp'),
+            pv=state_attr(e, 'pv_saving') | float(0), bat=state_attr(e, 'battery_saving') | float(0),
+            hp=state_attr(e, 'hp_saving') | float(0), bill_today=state_attr(e, 'bill_today') | float(0),
+            bill_with=state_attr(e, 'bill_with') | float(0), elec_with=state_attr(e, 'elec_with') | float(0),
+            gas_with=state_attr(e, 'gas_with') | float(0), elec_today=state_attr(e, 'elec_today') | float(0),
+            gas_today=state_attr(e, 'gas_today') | float(0), est=state_attr(e, 'gas_is_estimate'),
+            gen=state_attr(e, 'pv_generation_kwh') | float(0), imp=state_attr(e, 'import_kwh') | float(0),
+            exp=state_attr(e, 'export_kwh') | float(0), cyc=state_attr(e, 'battery_cycles') | float(0),
+            gchg=state_attr(e, 'grid_charge_kwh') | float(0), hpkwh=state_attr(e, 'hp_electricity_kwh') | float(0),
+            month=state_attr(e, 'ledger_month') | float(0), total=state_attr(e, 'ledger_total') | float(0)
+          )] -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- set rows = ns.rows -%}
+          {% if rows %}
+          {% set mx = rows | map(attribute='saving') | max %}
+          {% set mn = rows | map(attribute='npv') | max %}
+          | Setup | Kit | Outlay | Saving / year | | Payback | Net / month | 10-year net | NPV |
+          |---|---|--:|--:|---|--:|--:|--:|--:|
+          {% for r in rows | sort(attribute='npv', reverse=true) -%}
+          | **{{ r.name }}** | {{ r.kwp or 0 }} kWp, {{ r.kwh or 0 }} kWh | {{ gbp(r.capex) }} | {{ gbp(r.saving) }} | {{ bar(r.saving, mx, 12) }} | {{ (r.payback | round(1) ~ ' y') if r.payback < 99 else '—' }} | {{ '-' if r.net < 0 else '' }}{{ gbp(r.net | abs) }} | {{ '-' if r.n10 < 0 else '' }}{{ gbp(r.n10 | abs) }} | {{ '-' if r.npv < 0 else '' }}{{ gbp(r.npv | abs) }}{{ ' 🏆' if r.npv == mn else '' }} |
           {% endfor %}
-          {% else %}No scenarios calculated yet - the yearly model takes a few seconds after start-up.{% endif %}
+          {% endif %}
+      - type: markdown
+        title: Where the saving comes from
+        content: |
+          {%- macro bar(v, mx, n=16) -%}{{ '█' * ((v / mx * n) | round(0) | int) if mx > 0 and v > 0 else '' }}{%- endmacro -%}
+          {%- macro gbp(v) -%}{{ '-' if v < 0 else '' }}£{{ '{:,.0f}'.format(v | abs) }}{%- endmacro -%}
+          {%- set ns = namespace(rows=[]) -%}
+          {%- for e in integration_entities('energy_twin') | select('match', 'sensor\\..*_annual_saving$') | list -%}
+          {%- if states(e) not in ['unknown', 'unavailable'] -%}
+          {%- set ns.rows = ns.rows + [dict(
+            e=e, name=state_attr(e, 'scenario') or e, saving=states(e) | float(0),
+            npv=state_attr(e, 'npv') | float(0), payback=state_attr(e, 'payback_years') | float(99),
+            net=state_attr(e, 'monthly_net_cashflow') | float(0), capex=state_attr(e, 'capex') | float(0),
+            n10=state_attr(e, 'net_10y') | float(0), cum=state_attr(e, 'cumulative_by_year') or [],
+            monthly=state_attr(e, 'monthly') or [], kwh=state_attr(e, 'battery_kwh'), kwp=state_attr(e, 'pv_kwp'),
+            pv=state_attr(e, 'pv_saving') | float(0), bat=state_attr(e, 'battery_saving') | float(0),
+            hp=state_attr(e, 'hp_saving') | float(0), bill_today=state_attr(e, 'bill_today') | float(0),
+            bill_with=state_attr(e, 'bill_with') | float(0), elec_with=state_attr(e, 'elec_with') | float(0),
+            gas_with=state_attr(e, 'gas_with') | float(0), elec_today=state_attr(e, 'elec_today') | float(0),
+            gas_today=state_attr(e, 'gas_today') | float(0), est=state_attr(e, 'gas_is_estimate'),
+            gen=state_attr(e, 'pv_generation_kwh') | float(0), imp=state_attr(e, 'import_kwh') | float(0),
+            exp=state_attr(e, 'export_kwh') | float(0), cyc=state_attr(e, 'battery_cycles') | float(0),
+            gchg=state_attr(e, 'grid_charge_kwh') | float(0), hpkwh=state_attr(e, 'hp_electricity_kwh') | float(0),
+            month=state_attr(e, 'ledger_month') | float(0), total=state_attr(e, 'ledger_total') | float(0)
+          )] -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- set rows = ns.rows -%}
+          {% if rows %}
+          {% set mx = rows | map(attribute='saving') | max %}
+          | Setup | ☀️ Solar | 🔋 Battery | 🔥 Heat pump & hob | **Total** | |
+          |---|--:|--:|--:|--:|---|
+          {% for r in rows | sort(attribute='saving', reverse=true) -%}
+          | **{{ r.name }}** | {{ gbp(r.pv) }} | {{ gbp(r.bat) }} | {{ gbp(r.hp) if (r.hp != 0) else '—' }} | **{{ gbp(r.saving) }}** | {{ bar(r.saving, mx, 14) }} |
+          {% endfor %}
+
+          *Solar and battery are measured with any heat pump load in the house, which is why the same kit saves more alongside one.
+          Heat pump = gas avoided minus the extra electricity it needs.*
+          {% endif %}
+      - type: markdown
+        title: "Payback race: cumulative net position"
+        content: |
+          {%- macro bar(v, mx, n=16) -%}{{ '█' * ((v / mx * n) | round(0) | int) if mx > 0 and v > 0 else '' }}{%- endmacro -%}
+          {%- macro gbp(v) -%}{{ '-' if v < 0 else '' }}£{{ '{:,.0f}'.format(v | abs) }}{%- endmacro -%}
+          {%- set ns = namespace(rows=[]) -%}
+          {%- for e in integration_entities('energy_twin') | select('match', 'sensor\\..*_annual_saving$') | list -%}
+          {%- if states(e) not in ['unknown', 'unavailable'] -%}
+          {%- set ns.rows = ns.rows + [dict(
+            e=e, name=state_attr(e, 'scenario') or e, saving=states(e) | float(0),
+            npv=state_attr(e, 'npv') | float(0), payback=state_attr(e, 'payback_years') | float(99),
+            net=state_attr(e, 'monthly_net_cashflow') | float(0), capex=state_attr(e, 'capex') | float(0),
+            n10=state_attr(e, 'net_10y') | float(0), cum=state_attr(e, 'cumulative_by_year') or [],
+            monthly=state_attr(e, 'monthly') or [], kwh=state_attr(e, 'battery_kwh'), kwp=state_attr(e, 'pv_kwp'),
+            pv=state_attr(e, 'pv_saving') | float(0), bat=state_attr(e, 'battery_saving') | float(0),
+            hp=state_attr(e, 'hp_saving') | float(0), bill_today=state_attr(e, 'bill_today') | float(0),
+            bill_with=state_attr(e, 'bill_with') | float(0), elec_with=state_attr(e, 'elec_with') | float(0),
+            gas_with=state_attr(e, 'gas_with') | float(0), elec_today=state_attr(e, 'elec_today') | float(0),
+            gas_today=state_attr(e, 'gas_today') | float(0), est=state_attr(e, 'gas_is_estimate'),
+            gen=state_attr(e, 'pv_generation_kwh') | float(0), imp=state_attr(e, 'import_kwh') | float(0),
+            exp=state_attr(e, 'export_kwh') | float(0), cyc=state_attr(e, 'battery_cycles') | float(0),
+            gchg=state_attr(e, 'grid_charge_kwh') | float(0), hpkwh=state_attr(e, 'hp_electricity_kwh') | float(0),
+            month=state_attr(e, 'ledger_month') | float(0), total=state_attr(e, 'ledger_total') | float(0)
+          )] -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- set rows = ns.rows -%}
+          {%- set ys = [1, 2, 3, 5, 7, 10, 15, 20] -%}
+          {%- if rows -%}
+          {%- set h = namespace(a='| Year |', b='|---|') -%}
+          {%- for r in rows -%}{%- set h.a = h.a ~ ' ' ~ r.name ~ ' |' -%}{%- set h.b = h.b ~ '--:|' -%}{%- endfor -%}
+          {{ h.a }}
+          {{ h.b }}
+          {%- for y in ys -%}
+          {%- set ln = namespace(t='| ' ~ y ~ ' |') -%}
+          {%- for r in rows -%}
+          {%- if r.cum | length >= y -%}{%- set v = r.cum[y - 1] -%}{%- set cell = ('✅ ' if v >= 0 else '❌ ') ~ ('-' if v < 0 else '') ~ gbp(v | abs) -%}{%- else -%}{%- set cell = '—' -%}{%- endif -%}
+          {%- set ln.t = ln.t ~ ' ' ~ cell ~ ' |' -%}
+          {%- endfor -%}
+          {{ '\n' ~ ln.t }}
+          {%- endfor %}
+
+          *✅ = this setup has paid for itself by then (cumulative savings minus outlay and finance, with tariff inflation and degradation).*
+          {%- endif -%}
+      - type: markdown
+        title: Month by month saving (🏆 = best that month)
+        content: |
+          {%- macro bar(v, mx, n=16) -%}{{ '█' * ((v / mx * n) | round(0) | int) if mx > 0 and v > 0 else '' }}{%- endmacro -%}
+          {%- macro gbp(v) -%}{{ '-' if v < 0 else '' }}£{{ '{:,.0f}'.format(v | abs) }}{%- endmacro -%}
+          {%- set ns = namespace(rows=[]) -%}
+          {%- for e in integration_entities('energy_twin') | select('match', 'sensor\\..*_annual_saving$') | list -%}
+          {%- if states(e) not in ['unknown', 'unavailable'] -%}
+          {%- set ns.rows = ns.rows + [dict(
+            e=e, name=state_attr(e, 'scenario') or e, saving=states(e) | float(0),
+            npv=state_attr(e, 'npv') | float(0), payback=state_attr(e, 'payback_years') | float(99),
+            net=state_attr(e, 'monthly_net_cashflow') | float(0), capex=state_attr(e, 'capex') | float(0),
+            n10=state_attr(e, 'net_10y') | float(0), cum=state_attr(e, 'cumulative_by_year') or [],
+            monthly=state_attr(e, 'monthly') or [], kwh=state_attr(e, 'battery_kwh'), kwp=state_attr(e, 'pv_kwp'),
+            pv=state_attr(e, 'pv_saving') | float(0), bat=state_attr(e, 'battery_saving') | float(0),
+            hp=state_attr(e, 'hp_saving') | float(0), bill_today=state_attr(e, 'bill_today') | float(0),
+            bill_with=state_attr(e, 'bill_with') | float(0), elec_with=state_attr(e, 'elec_with') | float(0),
+            gas_with=state_attr(e, 'gas_with') | float(0), elec_today=state_attr(e, 'elec_today') | float(0),
+            gas_today=state_attr(e, 'gas_today') | float(0), est=state_attr(e, 'gas_is_estimate'),
+            gen=state_attr(e, 'pv_generation_kwh') | float(0), imp=state_attr(e, 'import_kwh') | float(0),
+            exp=state_attr(e, 'export_kwh') | float(0), cyc=state_attr(e, 'battery_cycles') | float(0),
+            gchg=state_attr(e, 'grid_charge_kwh') | float(0), hpkwh=state_attr(e, 'hp_electricity_kwh') | float(0),
+            month=state_attr(e, 'ledger_month') | float(0), total=state_attr(e, 'ledger_total') | float(0)
+          )] -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- set rows = ns.rows -%}
+          {%- if rows and rows[0].monthly -%}
+          {%- set h = namespace(a='| Month |', b='|---|') -%}
+          {%- for r in rows -%}{%- set h.a = h.a ~ ' ' ~ r.name ~ ' |' -%}{%- set h.b = h.b ~ '--:|' -%}{%- endfor -%}
+          {{ h.a }}
+          {{ h.b }}
+          {%- for k in range(rows[0].monthly | length) -%}
+          {%- set best = namespace(v=-99999) -%}
+          {%- for r in rows -%}{%- if r.monthly | length > k and r.monthly[k].saving > best.v -%}{%- set best.v = r.monthly[k].saving -%}{%- endif -%}{%- endfor -%}
+          {%- set ln = namespace(t='| ' ~ rows[0].monthly[k].month ~ ' |') -%}
+          {%- for r in rows -%}
+          {%- if r.monthly | length > k -%}{%- set m = r.monthly[k] -%}{%- set cell = ('🏆 ' if (rows | length > 1 and m.saving == best.v) else '') ~ ('-' if m.saving < 0 else '') ~ gbp(m.saving | abs) -%}{%- else -%}{%- set cell = '—' -%}{%- endif -%}
+          {%- set ln.t = ln.t ~ ' ' ~ cell ~ ' |' -%}
+          {%- endfor -%}
+          {{ '\n' ~ ln.t }}
+          {%- endfor -%}
+          {%- endif -%}
+      - type: markdown
+        title: Energy flows per year
+        content: |
+          {%- macro bar(v, mx, n=16) -%}{{ '█' * ((v / mx * n) | round(0) | int) if mx > 0 and v > 0 else '' }}{%- endmacro -%}
+          {%- macro gbp(v) -%}{{ '-' if v < 0 else '' }}£{{ '{:,.0f}'.format(v | abs) }}{%- endmacro -%}
+          {%- set ns = namespace(rows=[]) -%}
+          {%- for e in integration_entities('energy_twin') | select('match', 'sensor\\..*_annual_saving$') | list -%}
+          {%- if states(e) not in ['unknown', 'unavailable'] -%}
+          {%- set ns.rows = ns.rows + [dict(
+            e=e, name=state_attr(e, 'scenario') or e, saving=states(e) | float(0),
+            npv=state_attr(e, 'npv') | float(0), payback=state_attr(e, 'payback_years') | float(99),
+            net=state_attr(e, 'monthly_net_cashflow') | float(0), capex=state_attr(e, 'capex') | float(0),
+            n10=state_attr(e, 'net_10y') | float(0), cum=state_attr(e, 'cumulative_by_year') or [],
+            monthly=state_attr(e, 'monthly') or [], kwh=state_attr(e, 'battery_kwh'), kwp=state_attr(e, 'pv_kwp'),
+            pv=state_attr(e, 'pv_saving') | float(0), bat=state_attr(e, 'battery_saving') | float(0),
+            hp=state_attr(e, 'hp_saving') | float(0), bill_today=state_attr(e, 'bill_today') | float(0),
+            bill_with=state_attr(e, 'bill_with') | float(0), elec_with=state_attr(e, 'elec_with') | float(0),
+            gas_with=state_attr(e, 'gas_with') | float(0), elec_today=state_attr(e, 'elec_today') | float(0),
+            gas_today=state_attr(e, 'gas_today') | float(0), est=state_attr(e, 'gas_is_estimate'),
+            gen=state_attr(e, 'pv_generation_kwh') | float(0), imp=state_attr(e, 'import_kwh') | float(0),
+            exp=state_attr(e, 'export_kwh') | float(0), cyc=state_attr(e, 'battery_cycles') | float(0),
+            gchg=state_attr(e, 'grid_charge_kwh') | float(0), hpkwh=state_attr(e, 'hp_electricity_kwh') | float(0),
+            month=state_attr(e, 'ledger_month') | float(0), total=state_attr(e, 'ledger_total') | float(0)
+          )] -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- set rows = ns.rows -%}
+          {% if rows %}
+          | Setup | Solar generated | Bought from grid | Exported | Battery cycles | Cheap-rate grid charging | Heat pump electricity |
+          |---|--:|--:|--:|--:|--:|--:|
+          {% for r in rows -%}
+          | **{{ r.name }}** | {{ '{:,.0f}'.format(r.gen) }} kWh | {{ '{:,.0f}'.format(r.imp) }} kWh | {{ '{:,.0f}'.format(r.exp) }} kWh | {{ r.cyc | round(0) | int }} | {{ '{:,.0f}'.format(r.gchg) }} kWh | {{ ('{:,.0f}'.format(r.hpkwh) ~ ' kWh') if r.hpkwh else '—' }} |
+          {% endfor %}
+          {% endif %}
       - type: markdown
         title: What each would have saved you so far (live ledger)
         content: |
-          {% set ns = namespace(rows=[]) %}
-          {% for e in integration_entities('energy_twin') | select('match', 'sensor\\..*_annual_saving$') | list %}
-          {% set ns.rows = ns.rows + [dict(name=state_attr(e, 'scenario') or e, month=state_attr(e, 'ledger_month') | float(0), total=state_attr(e, 'ledger_total') | float(0))] %}
-          {% endfor %}
-          | Scenario | This month | Since started |
+          {%- macro bar(v, mx, n=16) -%}{{ '█' * ((v / mx * n) | round(0) | int) if mx > 0 and v > 0 else '' }}{%- endmacro -%}
+          {%- macro gbp(v) -%}{{ '-' if v < 0 else '' }}£{{ '{:,.0f}'.format(v | abs) }}{%- endmacro -%}
+          {%- set ns = namespace(rows=[]) -%}
+          {%- for e in integration_entities('energy_twin') | select('match', 'sensor\\..*_annual_saving$') | list -%}
+          {%- if states(e) not in ['unknown', 'unavailable'] -%}
+          {%- set ns.rows = ns.rows + [dict(
+            e=e, name=state_attr(e, 'scenario') or e, saving=states(e) | float(0),
+            npv=state_attr(e, 'npv') | float(0), payback=state_attr(e, 'payback_years') | float(99),
+            net=state_attr(e, 'monthly_net_cashflow') | float(0), capex=state_attr(e, 'capex') | float(0),
+            n10=state_attr(e, 'net_10y') | float(0), cum=state_attr(e, 'cumulative_by_year') or [],
+            monthly=state_attr(e, 'monthly') or [], kwh=state_attr(e, 'battery_kwh'), kwp=state_attr(e, 'pv_kwp'),
+            pv=state_attr(e, 'pv_saving') | float(0), bat=state_attr(e, 'battery_saving') | float(0),
+            hp=state_attr(e, 'hp_saving') | float(0), bill_today=state_attr(e, 'bill_today') | float(0),
+            bill_with=state_attr(e, 'bill_with') | float(0), elec_with=state_attr(e, 'elec_with') | float(0),
+            gas_with=state_attr(e, 'gas_with') | float(0), elec_today=state_attr(e, 'elec_today') | float(0),
+            gas_today=state_attr(e, 'gas_today') | float(0), est=state_attr(e, 'gas_is_estimate'),
+            gen=state_attr(e, 'pv_generation_kwh') | float(0), imp=state_attr(e, 'import_kwh') | float(0),
+            exp=state_attr(e, 'export_kwh') | float(0), cyc=state_attr(e, 'battery_cycles') | float(0),
+            gchg=state_attr(e, 'grid_charge_kwh') | float(0), hpkwh=state_attr(e, 'hp_electricity_kwh') | float(0),
+            month=state_attr(e, 'ledger_month') | float(0), total=state_attr(e, 'ledger_total') | float(0)
+          )] -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- set rows = ns.rows -%}
+          {% if rows %}
+          | Setup | This month | Since started |
           |---|--:|--:|
-          {% for r in ns.rows | sort(attribute='total', reverse=true) -%}
+          {% for r in rows | sort(attribute='total', reverse=true) -%}
           | **{{ r.name }}** | £{{ r.month }} | £{{ r.total }} |
           {% endfor %}
 
-          All scenarios see the same real load, prices, forecast and Power Up/Down events,
-          so differences are down purely to the kit and strategy.
+          All setups see the same real load, prices, forecast and Power Up/Down events, so differences come purely from the kit, heat pump and strategy.
+          {% endif %}
       - type: markdown
         content: |
-          **Add a scenario:** Settings → Devices & services → Home Energy Twin → *Add entry*.
-          Give it a name and choose *Copy settings from* to reuse your entities, then pick a hardware preset.
+          **Add a setup to compare:** *Settings → Devices & services → Home Energy Twin → Add entry*. Name it (e.g. "16 kWh + 6 kWp"),
+          choose *Copy settings from* to reuse your entities, pick a hardware preset, then tweak. Each setup runs its own
+          virtual battery against your real home. For a sweep of sizes within one setup use the *Size sweep* tab.
 
   # ───────────────────────────── 1. LIVE TWIN ─────────────────────────────
   - title: Live twin
@@ -197,10 +477,16 @@ views:
           - number.home_energy_twin_assumed_power_downs_per_month
           - number.home_energy_twin_assumed_power_ups_per_month
       - type: entities
-        title: Prices to test against
+        title: Cost & finance
+        show_header_toggle: false
         entities:
-          - number.home_energy_twin_solar_cost_per_kwp
-          - number.home_energy_twin_battery_cost_per_kwh
+          - number.home_energy_twin_system_cost
+          - number.home_energy_twin_grant
+          - select.home_energy_twin_how_you_pay
+          - number.home_energy_twin_finance_deposit
+          - number.home_energy_twin_loan_interest_rate
+          - number.home_energy_twin_finance_term
+          - number.home_energy_twin_fixed_monthly_payment
           - {entity: button.home_energy_twin_recalculate_annual_what_if, name: Recalculate year}
       - type: horizontal-stack
         cards:
@@ -221,6 +507,10 @@ views:
           | Outlay | £{{ states(s ~ 'outlay') }} |
           | Saving in year 1 | £{{ states(s ~ 'annual_saving') }} |
           | Finance payment | £{{ states(s ~ 'monthly_finance_payment') }} / month |
+          {%- if state_attr(s ~ 'annual_saving', 'effective_apr_pct') is not none %}
+          | Interest rate you are really paying | {{ state_attr(s ~ 'annual_saving', 'effective_apr_pct') }}% |
+          | Total cost of finance (interest + fees) | £{{ state_attr(s ~ 'annual_saving', 'cost_of_finance') }} |
+          {%- endif %}
           | **Net cashflow** | **£{{ states(s ~ 'monthly_net_cashflow') }} / month** |
           | Payback (with tariff inflation, degradation) | {{ states(s ~ 'payback') }} years |
           | Simple payback | {{ state_attr(s ~ 'payback', 'simple_payback_years') }} years |
@@ -333,17 +623,20 @@ views:
       - type: entities
         entities:
           - {entity: button.home_energy_twin_run_size_sweep, name: Run default sweep (rules engine, ~seconds)}
-          - {entity: sensor.home_energy_twin_best_sweep_result, name: Best by NPV}
+          - {entity: sensor.home_energy_twin_best_sweep_result, name: Best by annual saving}
       - type: markdown
-        title: Ranked by net present value
+        title: Ranked by saving per year
         content: |
           {% set rows = state_attr('sensor.home_energy_twin_best_sweep_result', 'rows') %}
           {% if rows %}
-          | kWp | kWh | Inv kW | Outlay | Saving/yr | Payback | Net/month | NPV |
-          |--:|--:|--:|--:|--:|--:|--:|--:|
+          | kWp | kWh | Inv kW | **Saving / year** | Last battery step | per extra kWh | Last array step | per extra kWp | Peak import |
+          |--:|--:|--:|--:|--:|--:|--:|--:|--:|
           {% for r in rows -%}
-          | {{ r.pv_kwp }} | {{ r.battery_kwh }} | {{ r.inverter_kw }} | £{{ r.capex }} | £{{ r.saving_year1 }} | {{ r.payback_years or '—' }} y | £{{ r.monthly_net }} | £{{ r.npv }} |
+          | {{ r.pv_kwp }} | {{ r.battery_kwh }} | {{ r.inverter_kw }} | **£{{ r.saving_year1 | round(0) | int }}** | {{ ('+£' ~ (r.battery_step_gain | round(0) | int)) if r.battery_step_gain is defined else '—' }} | {{ ('£' ~ r.battery_gain_per_kwh) if r.battery_gain_per_kwh is defined else '—' }} | {{ ('+£' ~ (r.array_step_gain | round(0) | int)) if r.array_step_gain is defined else '—' }} | {{ ('£' ~ r.array_gain_per_kwp) if r.array_gain_per_kwp is defined else '—' }} | {{ r.peak_import_kw }} kW |
           {% endfor %}
+
+          *There's no price here on purpose - each setup has one system cost. Use the step columns to judge a quote: if a bigger
+          battery costs £1,500 more and adds £90 a year, it takes about 17 years to pay back the difference.*
           {% else %}Press **Run size sweep**. For custom grids call the
           `energy_twin.run_sweep` service (battery_kwh, pv_kwp, inverter_kw lists).{% endif %}
 

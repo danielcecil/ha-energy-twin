@@ -5,14 +5,14 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_HW_PRESET, CONF_STRATEGY, DEFAULTS, STRATEGIES
+from .const import CONF_FIN_MODE, CONF_HW_PRESET, CONF_STRATEGY, CONF_TERM, DEFAULTS, STRATEGIES
 from .entity import TwinEntity
 from .sim.presets import HARDWARE_PRESETS, apply_preset, preset_choices
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback) -> None:
     c = entry.runtime_data
-    async_add_entities([StrategySelect(c), PresetSelect(c), EventKindSelect(c)])
+    async_add_entities([StrategySelect(c), PresetSelect(c), EventKindSelect(c), FinanceModeSelect(c)])
 
 
 class StrategySelect(TwinEntity, SelectEntity):
@@ -70,3 +70,21 @@ class EventKindSelect(TwinEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         self.coordinator.form["kind"] = self._by_label[option]
         self.async_write_ha_state()
+
+
+class FinanceModeSelect(TwinEntity, SelectEntity):
+    _attr_translation_key = "finance_mode"
+    _LABELS = {"cash": "Pay in cash", "loan": "Loan (interest rate)", "fixed_monthly": "Fixed monthly payment"}
+
+    def __init__(self, c) -> None:
+        super().__init__(c, "finance_mode")
+        self._by_label = {v: k for k, v in self._LABELS.items()}
+        self._attr_options = list(self._LABELS.values())
+
+    @property
+    def current_option(self):
+        cfg = self.coordinator.cfg
+        return self._LABELS.get(cfg.get(CONF_FIN_MODE) or ("loan" if cfg[CONF_TERM] > 0 else "cash"))
+
+    async def async_select_option(self, option: str) -> None:
+        await self.coordinator.async_set_options({CONF_FIN_MODE: self._by_label[option]})

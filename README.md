@@ -16,7 +16,8 @@ runs a **virtual** battery and array alongside your house. It never controls har
   pre-charge, then discharge + export).
 * **Annual what-if** - 365 days replayed (your real history where you have it) with a split of
   savings between solar and battery, payback, cash vs finance cashflow, NPV.
-* **Size sweep** - rank combinations of array size, battery size and inverter size.
+* **Size sweep** - rank combinations of array size, battery size and inverter size by annual saving, with what each
+  extra kWh of battery / kWp of array adds (judge it against your own quotes - there's no per-unit pricing).
 * **Hard rule:** the battery never discharges while a car is charging.
 
 ## Install
@@ -69,7 +70,7 @@ Switch on *Model a heat pump + induction hob* to see what replacing the gas comb
 * **Induction.** Gas hob kWh x 0.5 -> electric kWh, shaped to meal times.
 * **Money.** Net heat pump saving = gas avoided (+ standing charge if you disconnect gas) minus the extra
   electricity priced slot by slot. Solar/battery savings are then measured *with* the heat pump's load in the house
-  (it makes them worth more). Outlay includes the heat pump, tank and hob less any grant.
+  (it makes them worth more). Put the heat pump, tank and hob in the setup's system cost, with any grant below it.
 * **Main fuse.** Set the cut-out rating (default 100 A, single phase, 230 V, 90 % usable). The planner will not
   charge the battery past it, so a 7 kW car + heat pump + battery charge cannot stack beyond your supply.
   *Peak grid import* and *Main fuse usage* sensors show how close the plan gets.
@@ -78,7 +79,21 @@ Switch on *Model a heat pump + induction hob* to see what replacing the gas comb
 Annual space-heating electricity is more like +/-25-30 % because COP, flow temperature, emitters and sizing all
 matter, and the model assumes steady all-day heating (it does not model your house's thermal mass, so it does
 not pre-heat the building in the cheap window). Treat the numbers as a range and try COP-affecting settings
-(flow temperature, Carnot fraction) to see the spread. Prices, costs and the grant are placeholders - check yours.
+(flow temperature, Carnot fraction) to see the spread. Gas prices and the system cost are placeholders - check yours.
+
+## Costs and finance
+
+Each setup has **one system cost** (the whole installed price: solar, battery, inverter, heat pump, hob, install -
+whatever that setup includes), less an optional **grant**. No per-kWh or per-kWp pricing to maintain: add a setup
+per quote and compare them. Finance options:
+
+* **Cash** - pay it all up front.
+* **Loan** - APR over a term, with optional deposit and arrangement fee.
+* **Fixed monthly payment** - for quotes like "£149 a month for 10 years". The twin works out the interest rate
+  you are really paying and the total cost of finance (that example is ~13% APR, £7,880 on a £10,000 system).
+
+Results: payback (with tariff inflation and panel/battery degradation), monthly net cashflow after payments, 10-year
+net, NPV, and the whole annual bill (electricity + gas) today versus each setup.
 
 ## Compare several setups
 
@@ -86,7 +101,8 @@ Each config entry is a **scenario**: its own kit, strategy, costs, device and vi
 fed by the same real load, prices, forecast and Power Up/Down events. Add as many as you like
 (Settings -> Devices & services -> Home Energy Twin -> *Add entry*), choosing *Copy settings from*
 to reuse your entities. The dashboard's **Compare** tab finds every scenario automatically and ranks
-them by NPV with a live "saved so far" ledger. Power Up/Down events are shared across scenarios;
+them by NPV with the annual bill today-vs-setup, where the saving comes from (solar / battery / heat pump), a payback
+race, a month-by-month table and a live "saved so far" ledger. Power Up/Down events are shared across scenarios;
 Octopus/forecast/history lookups are cached and shared. Per-scenario tabs show one scenario -
 `python scripts/gen_dashboard.py <entity_prefix> "<title>"` makes one for another.
 

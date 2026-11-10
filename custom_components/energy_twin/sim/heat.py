@@ -235,6 +235,15 @@ def horizon(starts: list[datetime], tod: list[int], tz: ZoneInfo, cheap: list[bo
     return simulate_heat(tod, cheap, opp, [d.weekday() for d in loc], [d.date() for d in loc], temps, p, gm, tank0)
 
 
+def annual_gas_kwh(starts: list[datetime], tod: list[int], tz: ZoneInfo, p: HeatParams, gm: GasModel) -> float:
+    """Gas the current boiler + hob burn in a year (same weather + model as the heat pump run, so they agree)."""
+    n = len(starts)
+    act, _ = synth_temps(starts, tz)
+    loc = [s.astimezone(tz) for s in starts]
+    res = simulate_heat(tod, [False] * n, [False] * n, [d.weekday() for d in loc], [d.date() for d in loc], act, p, gm)
+    return sum(res.gas_kw) * SLOT_H * 365.0 / max(n / 48.0, 1.0)
+
+
 def summarise(res: HeatResult, cheap: list[bool], p: HeatParams) -> dict:
     dt = SLOT_H
     hp = sum(res.hp_kw) * dt

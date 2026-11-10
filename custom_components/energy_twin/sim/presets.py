@@ -16,7 +16,6 @@ HARDWARE_PRESETS: dict[str, dict] = {
         "label": "Tesla Powerwall 3 (13.5 kWh, integrated hybrid inverter)",
         "battery_kwh": 13.5, "battery_max_kw": 10.0, "inverter_kw": 10.0,
         "round_trip_eff": 0.89, "reserve_pct": 10.0, "pv_kwp": 8.0,
-        "battery_cost_fixed": 0.0, "battery_cost_per_kwh": 0.0, "pv_cost_fixed": 0.0,
         "note": "Inverter is built in; PV input up to ~20 kW DC. Check your market's continuous kW rating.",
     },
     "sigenstor_5kw_8kwh": {
@@ -74,7 +73,7 @@ TARIFF_PRESETS: dict[str, dict] = {
 }
 
 HARDWARE_KEYS = ("battery_kwh", "battery_max_kw", "inverter_kw", "round_trip_eff", "reserve_pct", "pv_kwp",
-                 "battery_cost_fixed", "battery_cost_per_kwh", "pv_cost_fixed", "pv_cost_per_kwp", "other_cost")
+                 )
 
 
 def apply_preset(table: dict[str, dict], name: str) -> dict:

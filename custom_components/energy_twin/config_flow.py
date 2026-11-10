@@ -41,6 +41,8 @@ def _sensor(multiple: bool = False, device_class: str | None = None):
 
 _TIME, _BOOL, _TEXT = sel.TimeSelector(), sel.BooleanSelector(), sel.TextSelector()
 
+FINANCE_MODES = {"cash": "Pay in cash", "loan": "Loan - interest rate over a term",
+                 "fixed_monthly": "Fixed monthly payment (e.g. a quoted £149/month)"}
 # step -> ordered [(key, selector, required)]
 STEPS: dict[str, list[tuple[str, Any, bool]]] = {
     "sources_live": [
@@ -94,8 +96,6 @@ STEPS: dict[str, list[tuple[str, Any, bool]]] = {
         (CONF_FALLBACK_GAS, _num(1000, 40000, 100, "kWh/yr"), True),
         (CONF_GAS_P, _num(0, 30, 0.01, "p/kWh"), True), (CONF_GAS_STANDING, _num(0, 100, 0.1, "p/day"), True),
         (CONF_GAS_DISCONNECT, _BOOL, True),
-        (CONF_HP_COST, _num(0, 50000, 100, "£"), True), (CONF_HP_GRANT, _num(0, 20000, 100, "£"), True),
-        (CONF_INDUCTION_COST, _num(0, 5000, 50, "£"), True), (CONF_HP_OTHER, _num(0, 30000, 100, "£"), True),
     ],
     "tariff": [
         (CONF_CHEAP_START, _TIME, True), (CONF_CHEAP_END, _TIME, True),
@@ -118,12 +118,11 @@ STEPS: dict[str, list[tuple[str, Any, bool]]] = {
         (CONF_CYCLE_COST, _num(0, 50, 0.1, "p/kWh"), True),
     ],
     "finance": [
-        (CONF_PV_COST_FIXED, _num(0, 100000, 10, "£"), True), (CONF_PV_COST_KWP, _num(0, 5000, 10, "£/kWp"), True),
-        (CONF_BATT_COST_FIXED, _num(0, 100000, 10, "£"), True),
-        (CONF_BATT_COST_KWH, _num(0, 5000, 10, "£/kWh"), True),
-        (CONF_OTHER_COST, _num(0, 100000, 10, "£"), True),
-        (CONF_DEPOSIT, _num(0, 100000, 10, "£"), True), (CONF_APR, _num(0, 40, 0.1, "%"), True),
-        (CONF_TERM, _num(0, 300, 1, "months"), True),
+        (CONF_SYSTEM_COST, _num(0, 200000, 100, "£"), True), (CONF_GRANT, _num(0, 50000, 100, "£"), True),
+        (CONF_FIN_MODE, _choice(FINANCE_MODES), True),
+        (CONF_DEPOSIT, _num(0, 200000, 100, "£"), True), (CONF_FIN_FEE, _num(0, 10000, 10, "£"), True),
+        (CONF_APR, _num(0, 40, 0.1, "%"), True), (CONF_TERM, _num(0, 360, 1, "months"), True),
+        (CONF_FIN_MONTHLY, _num(0, 5000, 1, "£/month"), True),
         (CONF_ESCALATION, _num(-5, 15, 0.1, "%/yr"), True), (CONF_PV_DEG, _num(0, 5, 0.1, "%/yr"), True),
         (CONF_BATT_DEG, _num(0, 10, 0.1, "%/yr"), True), (CONF_DISCOUNT, _num(0, 15, 0.1, "%"), True),
         (CONF_HORIZON, _num(5, 40, 1, "years"), True),
