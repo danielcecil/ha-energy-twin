@@ -1,6 +1,12 @@
 """Regenerates strings.json + translations/en.json. Run: python scripts/gen_translations.py"""
+import importlib.util
 import json
 from pathlib import Path
+
+_spec = importlib.util.spec_from_file_location(
+    "menus", Path(__file__).resolve().parents[1] / "custom_components" / "energy_twin" / "menus.py")
+menus = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(menus)   # pure data module: no Home Assistant import needed
 
 F = {  # option key -> (label, help)
     "power_entity": ("House power now (Home Mini)", "Whole-home import power sensor, W or kW. Used to drive the live twin."),
@@ -127,7 +133,7 @@ def steps(keys=None):
 def vsteps():
     return {
       "vehicles": {"title": "Vehicles", "description": "Model each car separately so charging is predicted from whether it is plugged in, at home or dispatched - not averaged over every night.\n\nCurrent vehicles:\n{vehicles}",
-                   "menu_options": {"vehicle_add": "Add a vehicle", "vehicle_edit": "Edit a vehicle", "vehicle_remove": "Remove a vehicle", "init": "Back"}},
+                   "menu_options": menus.options(menus.VEHICLE_MENU)},
       "vehicle_add": {"title": "Vehicle", "data": {k: v[0] for k, v in VF.items()}, "data_description": {k: v[1] for k, v in VF.items() if v[1]}},
       "vehicle_edit": {"title": "Edit which vehicle?", "data": {"name": "Vehicle"}},
       "vehicle_remove": {"title": "Remove which vehicle?", "data": {"name": "Vehicle"}},
@@ -159,11 +165,8 @@ ENT = {
 doc = {
   "config": {"step": steps(["user", "hardware_preset", "hardware", "tariff_preset", "sources_live", "sources_octopus", "sources_solar_history"]),
              "abort": {"already_configured": "Home Energy Twin is already set up."}},
-  "options": {"step": {**steps(), **vsteps(), "init": {"title": "Home Energy Twin", "description": "Change any section, then choose Done.",
-      "menu_options": {"sources_live": "Live data entities", "sources_octopus": "Octopus entities",
-        "sources_solar_history": "Solar forecast & history", "vehicles": "Vehicles (EV charging)", "sources_heat": "Heat pump data", "supply": "Supply & main fuse", "heat": "Heat pump & tank", "heat_costs": "Gas replaced & costs", "hardware_preset": "Apply a hardware preset",
-        "hardware": "Solar & battery", "tariff_preset": "Apply a tariff preset", "tariff": "Tariff",
-        "finance": "Costs & finance", "strategy": "Strategy", "assumptions": "Assumptions", "done": "Save and finish"}}}},
+  "options": {"step": {**steps(), **vsteps(), **{k: {"title": t, "description": d, "menu_options": menus.options(menus.TOP if k == "init" else menus.SECTIONS[k])}
+             for k, (t, d) in menus.SECTION_TEXT.items()}}},
   "entity": {p: {k: {"name": v} for k, v in d.items()} for p, d in ENT.items()},
   "services": {
     "add_event": {"name": "Add Power Up / Power Down event", "description": "Tell the twin about an Octopus event window.",

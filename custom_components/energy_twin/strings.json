@@ -436,24 +436,64 @@
       },
       "init": {
         "title": "Home Energy Twin",
-        "description": "Change any section, then choose Done.",
+        "description": "Choose a section. Choose **Save and finish** when you're done.",
         "menu_options": {
-          "sources_live": "Live data entities",
-          "sources_octopus": "Octopus entities",
-          "sources_solar_history": "Solar forecast & history",
+          "menu_sources": "Data sources",
+          "menu_kit": "Solar, battery & supply",
+          "menu_money": "Tariff, costs & finance",
           "vehicles": "Vehicles (EV charging)",
-          "sources_heat": "Heat pump data",
-          "supply": "Supply & main fuse",
-          "heat": "Heat pump & tank",
-          "heat_costs": "Gas replaced & costs",
-          "hardware_preset": "Apply a hardware preset",
-          "hardware": "Solar & battery",
-          "tariff_preset": "Apply a tariff preset",
-          "tariff": "Tariff",
+          "menu_heat": "Heat pump & induction hob",
+          "menu_planning": "Strategy & assumptions",
+          "done": "Save and finish"
+        }
+      },
+      "menu_sources": {
+        "title": "Data sources",
+        "description": "Where the twin reads your real load, prices, solar forecast and history.",
+        "menu_options": {
+          "sources_live": "Live data (power, prices)",
+          "sources_octopus": "Octopus (rates, dispatches, events)",
+          "sources_solar_history": "Solar forecast & consumption history",
+          "init": "Back"
+        }
+      },
+      "menu_kit": {
+        "title": "Solar, battery & supply",
+        "description": "The kit being modelled and your main fuse.",
+        "menu_options": {
+          "hardware_preset": "Choose a hardware preset",
+          "hardware": "Solar & battery details",
+          "supply": "Main fuse & supply",
+          "init": "Back"
+        }
+      },
+      "menu_money": {
+        "title": "Tariff, costs & finance",
+        "description": "Prices, what the kit costs, and how it's paid for.",
+        "menu_options": {
+          "tariff_preset": "Choose a tariff preset",
+          "tariff": "Tariff rates",
           "finance": "Costs & finance",
+          "init": "Back"
+        }
+      },
+      "menu_heat": {
+        "title": "Heat pump & induction hob",
+        "description": "Model replacing the gas combi and gas hob.",
+        "menu_options": {
+          "heat": "Heat pump & hot water tank",
+          "heat_costs": "Gas replaced & costs",
+          "sources_heat": "Gas & temperature data",
+          "init": "Back"
+        }
+      },
+      "menu_planning": {
+        "title": "Strategy & assumptions",
+        "description": "How the battery is planned, and the assumptions behind the yearly model.",
+        "menu_options": {
           "strategy": "Strategy",
           "assumptions": "Assumptions",
-          "done": "Save and finish"
+          "init": "Back"
         }
       }
     }

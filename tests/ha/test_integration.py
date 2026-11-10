@@ -127,12 +127,14 @@ async def test_options_flow_menu(hass: HomeAssistant):
     entry = await _setup(hass)
     r = await hass.config_entries.options.async_init(entry.entry_id)
     assert r["type"] == "menu"
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "menu_kit"})
     r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "hardware"})
     assert r["step_id"] == "hardware"
     r = await hass.config_entries.options.async_configure(r["flow_id"], {
         "pv_kwp": 8, "inverter_kw": 8, "pv_annual_yield": 950, "battery_kwh": 16, "battery_max_kw": 8,
         "round_trip_eff": 0.9, "reserve_pct": 10, "export_limit_kw": 3.68, "cycle_cost_p": 0})
-    assert r["type"] == "menu"
+    assert r["type"] == "menu" and r["step_id"] == "menu_kit"                   # back in the section it came from
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "init"})
     r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "done"})
     assert r["type"] == "create_entry"
     await hass.async_block_till_done()
@@ -370,8 +372,10 @@ async def test_heat_pump_off_changes_nothing(hass: HomeAssistant):
 
 async def test_heat_options_flow_steps(hass: HomeAssistant):
     entry = await _setup(hass)
-    for step in ("supply", "heat", "heat_costs", "sources_heat"):
+    for section, step in (("menu_kit", "supply"), ("menu_heat", "heat"), ("menu_heat", "heat_costs"),
+                          ("menu_heat", "sources_heat")):
         r = await hass.config_entries.options.async_init(entry.entry_id)
+        r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": section})
         r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": step})
         assert r["type"] == "form" and r["step_id"] == step, step
 
@@ -431,3 +435,22 @@ async def test_forecast_solar_is_auto_selected_when_there_is_only_one(hass: Home
     fs, dev, tomorrow_local = await _forecast_solar_device(hass)
     entry = await _setup(hass, strategy="rules", forecast_ref_kwp=None, pv_now_entity=None)      # nothing chosen at all
     await _check_forecast_plan(hass, entry, tomorrow_local)
+
+
+async def test_every_menu_item_is_labelled_and_reachable(hass: HomeAssistant):
+    """Regression: new settings pages used to appear as blank menu rows."""
+    from custom_components.energy_twin.menus import LABELS, SECTIONS, TOP
+    entry = await _setup(hass)
+    mgr = hass.config_entries.options
+    r = await mgr.async_init(entry.entry_id)
+    assert r["type"] == "menu" and isinstance(r["menu_options"], dict)
+    assert list(r["menu_options"]) == TOP and all(v.strip() for v in r["menu_options"].values())
+    for section, items in SECTIONS.items():
+        for item in items:
+            r = await mgr.async_init(entry.entry_id)
+            r = await mgr.async_configure(r["flow_id"], {"next_step_id": section})
+            assert r["type"] == "menu" and all(r["menu_options"][i] == LABELS[i] and LABELS[i].strip() for i in items)
+            if item == "init":
+                continue
+            r = await mgr.async_configure(r["flow_id"], {"next_step_id": item})
+            assert r["type"] in ("form", "menu"), (section, item)

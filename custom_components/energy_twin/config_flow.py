@@ -10,6 +10,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector as sel
 
 from .const import *  # noqa: F403
+from .menus import SECTIONS, TOP, VEHICLE_MENU, options as menu_options
 from .sim.presets import HARDWARE_PRESETS, TARIFF_PRESETS, apply_preset, preset_choices
 
 
@@ -149,10 +150,6 @@ VEHICLE_FIELDS: list[tuple[str, Any, bool, Any]] = [
     ("plug_states", _TEXT, False, None),
     ("home_states", _TEXT, False, None),
 ]
-MENU = ["sources_live", "sources_octopus", "sources_solar_history", "sources_heat", "vehicles", "supply",
-        "heat", "heat_costs", "hardware_preset", "hardware", "tariff_preset",
-        "tariff", "finance", "strategy", "assumptions", "done"]
-
 
 def _schema(step: str, current: dict) -> vol.Schema:
     fields: dict = {}
@@ -259,13 +256,21 @@ class EnergyTwinOptionsFlow(_FlowBase, OptionsFlow):
     def __init__(self) -> None:
         self.opts: dict = {}
 
+    _section: str | None = None
+
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
         if not self.opts:
             self.opts = dict(self.config_entry.options)
-        return self.async_show_menu(step_id="init", menu_options=MENU)
+        self._section = None
+        return self.async_show_menu(step_id="init", menu_options=menu_options(TOP))
+
+    async def _show_section(self, name: str) -> ConfigFlowResult:
+        self._section = name
+        return self.async_show_menu(step_id=name, menu_options=menu_options(SECTIONS[name]))
 
     async def _back(self) -> ConfigFlowResult:
-        return await self.async_step_init()
+        """After finishing a form, return to the section menu it came from."""
+        return await self._show_section(self._section) if self._section else await self.async_step_init()
 
     async def async_step_hardware_preset(self, user_input=None) -> ConfigFlowResult:
         return await self._preset("hardware_preset", HARDWARE_PRESETS, CONF_HW_PRESET, user_input, self._back)
@@ -280,8 +285,8 @@ class EnergyTwinOptionsFlow(_FlowBase, OptionsFlow):
     async def async_step_vehicles(self, user_input=None) -> ConfigFlowResult:
         vs = self._vehicles()
         listing = "\n".join(f"- {v['name']} ({VEHICLE_MODES.get(v.get('mode'), v.get('mode'))})" for v in vs) or "None yet."
-        options = ["vehicle_add"] + (["vehicle_edit", "vehicle_remove"] if vs else []) + ["init"]
-        return self.async_show_menu(step_id="vehicles", menu_options=options,
+        ids = [m for m in VEHICLE_MENU if vs or m not in ("vehicle_edit", "vehicle_remove")]
+        return self.async_show_menu(step_id="vehicles", menu_options=menu_options(ids),
                                     description_placeholders={"vehicles": listing})
 
     async def async_step_vehicle_edit(self, user_input=None) -> ConfigFlowResult:
@@ -337,3 +342,13 @@ for _name in ("sources_live", "sources_octopus", "sources_solar_history", "sourc
               "assumptions"):
     if not hasattr(EnergyTwinOptionsFlow, f"async_step_{_name}"):
         setattr(EnergyTwinOptionsFlow, f"async_step_{_name}", _make_step(_name))
+
+
+def _make_section(name: str):
+    async def handler(self, user_input=None):
+        return await self._show_section(name)
+    return handler
+
+
+for _sec in SECTIONS:
+    setattr(EnergyTwinOptionsFlow, f"async_step_{_sec}", _make_section(_sec))
