@@ -722,3 +722,29 @@ async def test_live_battery_never_discharges_into_a_car(hass: HomeAssistant):
     c2.last_tick = t - timedelta(seconds=60)
     c2._step(t, hw2, i2)
     assert c2._live["battery"] >= 0
+
+
+async def test_virtual_battery_level_survives_a_restart(hass: HomeAssistant):
+    from custom_components.energy_twin.coordinator import TwinCoordinator
+    entry = await _setup(hass, strategy="rules")
+    c = entry.runtime_data
+    hw = c.hardware()
+    c.soc = 0.6 * hw.emax
+    await c._store.async_save({"soc": c.soc, "last": dt_util.utcnow().isoformat(), "acc": c.acc})   # what a shutdown writes
+    fresh = TwinCoordinator(hass, entry)                                    # a new process after the restart
+    await fresh.async_setup()
+    assert fresh.soc == pytest.approx(0.6 * hw.emax)                        # restored, not reset to the 10% reserve
+    # brand-new scenario (nothing saved yet) starts at the reserve
+    other = MockConfigEntry(domain=DOMAIN, title="New", options={"battery_kwh": 10.0})
+    other.add_to_hass(hass)
+    blank = TwinCoordinator(hass, other)
+    await blank.async_setup()
+    assert blank.soc == pytest.approx(blank.hardware().emin)
+    # a smaller battery than the saved level is clamped rather than showing >100 %
+    await entry.runtime_data._store.async_save({"soc": 12.0})
+    small = MockConfigEntry(domain=DOMAIN, title="Small", options={"battery_kwh": 5.0})
+    small.add_to_hass(hass)
+    sc = TwinCoordinator(hass, small)
+    sc._store = c._store                                                    # same saved data
+    await sc.async_setup()
+    assert sc.soc == pytest.approx(5.0)

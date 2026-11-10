@@ -236,7 +236,9 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
     async def async_setup(self) -> None:
         saved = await self._store.async_load() or {}
         hw = self.hardware()
-        self.soc = saved.get("soc", hw.emin)
+        # restore the virtual battery level; clamp in case the battery was resized while we were off
+        saved_soc = saved.get("soc")
+        self.soc = hw.emin if saved_soc is None else min(max(float(saved_soc), hw.emin), hw.emax)
         self.acc = {**self.acc, **saved.get("acc", {})}
         self.learn_live = {k: evm.VehicleLearn.from_dict(v) for k, v in (saved.get("learn") or {}).items()}
         self.veh_rt = saved.get("veh_rt") or {}
