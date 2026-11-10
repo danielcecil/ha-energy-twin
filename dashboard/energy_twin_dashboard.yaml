@@ -398,10 +398,10 @@ views:
         content: |
           {% set vs = state_attr('sensor.home_energy_twin_ev_charging_expected_tonight', 'vehicles') %}
           {% if vs %}
-          | Car | Mode | Plugged | Home | SoC | Needs | Chance | Expected tonight | Learned session |
-          |---|---|---|---|--:|--:|--:|--:|--:|
+          | Car | Mode | Found | Plugged | Home | SoC → target | Needs | Chance | Expected tonight | Learned session |
+          |---|---|---|---|---|--:|--:|--:|--:|--:|
           {% for v in vs -%}
-          | **{{ v.vehicle }}** | {{ v.mode }} | {{ v.plugged }} ({{ v.raw_plug_state }}) | {{ v.home }} ({{ v.raw_home_state }}) | {{ v.soc_pct if v.soc_pct is not none else '—' }} | {{ v.needed_kwh }} kWh | {{ (v.probability * 100) | round(0) }}% | {{ v.expected_kwh_tonight }} kWh | {{ v.session_kwh_learned }} kWh ({{ v.learned_sessions }} seen) |
+          | **{{ v.vehicle }}** | {{ v.mode }} | {{ v.entities.keys() | list | join(', ') if v.entities else '—' }} | {{ v.plugged }} ({{ v.raw_plug_state }}) | {{ v.home }} ({{ v.raw_home_state }}) | {{ v.soc_pct if v.soc_pct is not none else '—' }} → {{ v.target_soc_pct }}% | {{ v.needed_kwh }} kWh | {{ (v.probability * 100) | round(0) }}% | {{ v.expected_kwh_tonight }} kWh | {{ v.session_kwh_learned }} kWh ({{ v.learned_sessions }} seen) |
           {% endfor %}
           *Plugged/Home show what was understood and, in brackets, the raw entity state. If a value is `None`, the state
           wasn't recognised - set the override in the vehicle's options.*

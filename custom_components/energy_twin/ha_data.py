@@ -310,3 +310,59 @@ def forecast_array_kwp(hass: HomeAssistant, entry_id: str | None) -> float | Non
         return None
     wp = entry.options.get("modules_power")
     return float(wp) / 1000.0 if wp else None
+
+
+def _ent_key(ent, key: str) -> bool:
+    return ent.translation_key == key or (ent.unique_id or "").endswith(key)
+
+
+def discover_vehicle_entities(hass: HomeAssistant, device_id: str | None) -> dict[str, str]:
+    """Find a car's entities from its device. Teslemetry, Tesla Fleet and Tessie share the same keys
+    (checked against Home Assistant's own sources); other makes fall back to device classes and names."""
+    from homeassistant.helpers import entity_registry as er
+
+    if not device_id:
+        return {}
+    ents = [e for e in er.async_entries_for_device(er.async_get(hass), device_id) if not e.disabled_by]
+
+    def pick(domain: str, keys: tuple[str, ...] = (), *, device_class: str | None = None, words: tuple[str, ...] = (),
+             avoid: tuple[str, ...] = ()) -> str | None:
+        pool = [e for e in ents if e.domain == domain]
+        for k in keys:                                          # exact, known keys first (in order of preference)
+            for e in pool:
+                if _ent_key(e, k):
+                    return e.entity_id
+        for e in pool:                                          # then generic matching
+            txt = " ".join(filter(None, [e.translation_key, e.entity_id, e.original_name, e.name])).lower()
+            dc = (e.device_class or e.original_device_class or "")
+            if any(a in txt for a in avoid):
+                continue
+            if (device_class and dc == device_class and (not words or any(w in txt for w in words))) or \
+               (not device_class and words and any(w in txt for w in words)):
+                return e.entity_id
+        return None
+
+    out = {
+        "soc_entity": pick("sensor", ("charge_state_battery_level", "charge_state_usable_battery_level"),
+                           device_class="battery", words=("battery", "level", "soc")),
+        "plug_entity": (pick("binary_sensor", ("charge_state_conn_charge_cable",), device_class="plug")
+                        or pick("sensor", ("charge_state_charging_state",))
+                        or pick("binary_sensor", words=("plug", "cable"))
+                        or pick("sensor", words=("plug", "cable"))),
+        "power_entity": pick("sensor", ("charge_state_charger_power",), device_class="power",
+                             words=("charg",), avoid=("limit", "max")),
+        "home_entity": pick("device_tracker", ("location",), words=("location", "position", "tracker"),
+                            avoid=("route", "origin", "destination")) or next(
+                                (e.entity_id for e in ents if e.domain == "device_tracker"
+                                 and not any(w in (e.entity_id or "") for w in ("route", "origin", "destination"))), None),
+        "target_soc_entity": pick("number", ("charge_state_charge_limit_soc",), words=("charge_limit", "charging_limit", "charge limit")),
+        "energy_stat": pick("sensor", ("charge_state_charge_energy_added",), device_class="energy", words=("added", "session")),
+    }
+    return {k: v for k, v in out.items() if v}
+
+
+def device_name(hass: HomeAssistant, device_id: str | None) -> str | None:
+    from homeassistant.helpers import device_registry as dr
+
+    dev = dr.async_get(hass).async_get(device_id) if device_id else None
+    return (dev.name_by_user or dev.name) if dev else None

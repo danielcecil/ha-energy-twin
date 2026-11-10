@@ -36,7 +36,7 @@
         "title": "Live data",
         "description": "All optional. The twin works from the tariff and a typical profile without them.",
         "data": {
-          "power_entity": "House power now (Home Mini)",
+          "power_entity": "Charging power sensor - override",
           "ev_power_entities": "Car charger power sensors",
           "pv_now_entity": "Expected solar generation now",
           "import_now_entity": "Current import price",
@@ -115,6 +115,9 @@
     }
   },
   "options": {
+    "error": {
+      "name_required": "Pick a vehicle device or enter a name."
+    },
     "step": {
       "user": {
         "title": "New scenario",
@@ -151,7 +154,7 @@
         "title": "Live data",
         "description": "All optional. The twin works from the tariff and a typical profile without them.",
         "data": {
-          "power_entity": "House power now (Home Mini)",
+          "power_entity": "Charging power sensor - override",
           "ev_power_entities": "Car charger power sensors",
           "pv_now_entity": "Expected solar generation now",
           "import_now_entity": "Current import price",
@@ -394,13 +397,16 @@
       },
       "vehicle_add": {
         "title": "Vehicle",
+        "description": "Pick the car's **device** and give it a mode - that is usually all you need. Charge target comes from the car's own charge limit when it has one.",
         "data": {
+          "device_id": "Vehicle device",
+          "target_soc_entity": "Charge limit entity (%) - override",
           "name": "Vehicle name",
           "mode": "How it charges",
           "power_entity": "Charging power sensor",
-          "plug_entity": "Plugged-in entity",
-          "home_entity": "At-home entity",
-          "soc_entity": "Battery level entity (%)",
+          "plug_entity": "Plugged-in entity - override",
+          "home_entity": "At-home entity - override",
+          "soc_entity": "Battery level entity (%) - override",
           "capacity_kwh": "Battery size (kWh)",
           "target_soc_pct": "Charge target (%)",
           "charger_kw": "Charger power (kW)",
@@ -410,7 +416,9 @@
           "home_states": "At-home states (override)"
         },
         "data_description": {
-          "name": "e.g. 'Tesla' - used to label the car in the dashboard.",
+          "device_id": "Pick the car's device (e.g. your Tesla). Its battery, charger power, plugged-in, location, charge-limit and energy entities are found automatically. The fields below only override or add to that - or fill them all in for a car with no device.",
+          "target_soc_entity": "Optional. e.g. a Tesla's charge-limit number. When present it is used as the charge target instead of the fixed value below.",
+          "name": "Optional if you picked a device (its name is used). Used to label the car on the dashboard.",
           "mode": "Only one car per account is usually on Intelligent Octopus Go. The other charges on the off-peak schedule.",
           "power_entity": "Optional. W or kW from the car or charger integration. Lets the twin see real charging and learn session sizes.",
           "plug_entity": "Optional. A binary sensor, or a charging-status sensor - states like on/off, connected/disconnected, charging, stopped are understood.",

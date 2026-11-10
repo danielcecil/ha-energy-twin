@@ -32,24 +32,23 @@ runs a **virtual** battery and array alongside your house. It never controls har
 
 ## Cars (EV charging)
 
-Cars are modelled **individually**, not as an averaged nightly load. In *Configure -> Vehicles* add
-each car with whatever entities its integration offers - all optional:
+Cars are modelled **individually**, not as an averaged nightly load. In *Configure -> Vehicles* add each car:
 
-| Entity | Used for |
-|---|---|
-| Charging power sensor (W/kW) | real charging; learning session sizes |
-| Plugged-in entity | binary sensor *or* a status sensor (`connected`, `charging`, `stopped`, `Disconnected`...) |
-| At-home entity | device tracker / person / binary sensor (any zone other than `home` = away) |
-| Battery level % | exact energy still needed (target SoC and battery size set per car) |
-| Energy statistic | learn the pattern from history straight away |
+* **Pick the car's device** (e.g. each Tesla) - that is usually all you need. Its entities are found
+  automatically: battery %, charger power, plugged-in / charging state, location, charge limit and energy added.
+  Verified against Home Assistant's own Teslemetry, Tesla Fleet and Tessie integrations (they share entity keys);
+  other makes fall back to device classes and names (battery, plug, power, device tracker).
+* Anything you enter in the entity fields **overrides** the discovered one - and a car with no device at all
+  can be set up entirely from entities (any make, or just a charger).
+* **Charge target** comes from the car's own charge-limit entity when it has one (a Tesla's charge limit),
+  otherwise the fixed % you set. Battery size and charger power are set per car (the car does not report them).
 
-Each car is either **IOG** (smart-charged: charges in Octopus dispatch slots at any time of day, plus the
-off-peak window) or **off-peak** (only the off-peak window, from its start). One IOG car and one
-schedule-only car is the normal two-car setup. A car that is plugged in at home *will* charge; one that
-isn't only contributes a learned probability for that weekday, so non-charging days no longer smear into
-the plan. Learning only happens around real sessions (energy delivered, plug-in days). Integrations word
-their states differently, so there are optional "plugged-in states" / "at-home states" overrides, and the
-Diagnostics tab shows, per car, what was understood and from which raw state.
+Each car is **IOG** (smart-charged: dispatch slots at any time of day plus the off-peak window) or **off-peak**
+(only the off-peak window, from its start) - normally one of each. A car that is plugged in at home *will* charge;
+one that isn't contributes only a learned probability for that weekday, so non-charging days no longer smear into
+the plan. Learning happens only around real sessions (energy delivered, plug-in days), plus history from each car's
+energy statistic. Integrations word their states differently, so there are optional "plugged-in states" /
+"at-home states" overrides, and Diagnostics shows per car which entities were found and what was understood.
 
 ## Heat pump, induction hob and the main fuse
 

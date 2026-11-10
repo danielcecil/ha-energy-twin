@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -104,13 +105,28 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
 
     @property
     def vehicles(self) -> list[evm.Vehicle]:
+        """Configured cars. A chosen device supplies its entities; anything set explicitly overrides it."""
         out = []
         for d in self.cfg.get(CONF_VEHICLES) or []:
+            merged = {k: v for k, v in d.items() if v not in (None, "")}
+            did = d.get("device_id")
+            if did:
+                for k, v in self._discover_vehicle(did).items():
+                    merged.setdefault(k, v)
+                merged.setdefault("name", ha_data.device_name(self.hass, did) or "")
             try:
-                out.append(evm.Vehicle.from_dict(d))
+                if merged.get("name"):
+                    out.append(evm.Vehicle.from_dict(merged))
             except (KeyError, TypeError, ValueError):
                 continue
         return out
+
+    def _discover_vehicle(self, device_id: str) -> dict[str, str]:
+        cache = self.__dict__.setdefault("_veh_disc", {})
+        hit = cache.get(device_id)
+        if hit is None or time.monotonic() - hit[0] > 300:
+            hit = cache[device_id] = (time.monotonic(), ha_data.discover_vehicle_entities(self.hass, device_id))
+        return hit[1]
 
     def learn_for(self, name: str) -> evm.VehicleLearn:
         return evm.VehicleLearn.combine(self.learn_hist.get(name, evm.VehicleLearn()),
@@ -125,6 +141,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             plugged=evm.interpret_plugged(plug.state if plug else None, v.plug_states),
             home=evm.interpret_home(home.state if home else None, v.home_states),
             soc_pct=soc, live_kw=live, delivered_kwh=rt.get("delivered", 0.0),
+            target_soc_pct=ha_data.to_float(self._state(v.target_soc_entity)),
             raw_plug=plug.state if plug else None, raw_home=home.state if home else None)
 
     def _track_vehicles(self, now: datetime, h: float) -> None:
@@ -379,6 +396,10 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             infos = {v.name: self.vehicle_info(v) for v in vehicles}
             evk, self.ev_info = evm.build_ev_load(starts, tod, self.tz, tariff, vehicles, infos,
                                                   {v.name: self.learn_for(v.name) for v in vehicles}, disp_slots)
+            for note, v in zip(self.ev_info, vehicles):
+                note["entities"] = {role: ent for role, ent in (
+                    ("power", v.power_entity), ("plug", v.plug_entity), ("home", v.home_entity), ("battery", v.soc_entity),
+                    ("charge limit", v.target_soc_entity), ("energy", v.energy_stat)) if ent}
         else:                                  # legacy: smoothed average profile
             evk = []
             for i, s in enumerate(starts):

@@ -454,3 +454,100 @@ async def test_every_menu_item_is_labelled_and_reachable(hass: HomeAssistant):
                 continue
             r = await mgr.async_configure(r["flow_id"], {"next_step_id": item})
             assert r["type"] in ("form", "menu"), (section, item)
+
+
+def _tesla(hass, name, vin, *, cable=True, soc="40", limit="90", charging="charging", home="home", power="6.9"):
+    """Register a car exactly as Teslemetry / Tesla Fleet / Tessie do (same entity keys, classes and units)."""
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+    ce = MockConfigEntry(domain="teslemetry", title=name)
+    ce.add_to_hass(hass)
+    dev = dr.async_get(hass).async_get_or_create(config_entry_id=ce.entry_id, identifiers={("teslemetry", vin)}, name=name)
+    reg, slug = er.async_get(hass), name.lower().replace(" ", "_")
+
+    def add(domain, key, state, attrs=None, **kw):
+        e = reg.async_get_or_create(domain, "teslemetry", f"{vin}-{key}", config_entry=ce, device_id=dev.id,
+                                    translation_key=key, suggested_object_id=f"{slug}_{key}", **kw)
+        hass.states.async_set(e.entity_id, state, attrs or {})
+        return e.entity_id
+
+    ids = {
+        "soc": add("sensor", "charge_state_battery_level", soc, {"unit_of_measurement": "%"}, original_device_class="battery"),
+        "state": add("sensor", "charge_state_charging_state", charging, original_device_class="enum"),
+        "power": add("sensor", "charge_state_charger_power", power, {"unit_of_measurement": "kW"}, original_device_class="power"),
+        "limit": add("number", "charge_state_charge_limit_soc", limit, {"unit_of_measurement": "%"}),
+        "home": add("device_tracker", "location", home),
+        "energy": add("sensor", "charge_state_charge_energy_added", "5.0", {"unit_of_measurement": "kWh"}, original_device_class="energy"),
+        "usable": None,
+    }
+    if cable:
+        ids["cable"] = add("binary_sensor", "charge_state_conn_charge_cable", "on", original_device_class="connectivity")
+    return dev, ids
+
+
+async def test_two_teslas_from_their_devices(hass: HomeAssistant):
+    a, ia = _tesla(hass, "Tesla Model Y", "VINA", cable=True, soc="40", limit="90", home="home")
+    b, ib = _tesla(hass, "Tesla Model 3", "VINB", cable=False, soc="70", limit="80", charging="disconnected",
+                   home="not_home", power="0")
+    vehicles = [{"device_id": a.id, "mode": "iog", "capacity_kwh": 75, "charger_kw": 7.0},
+                {"device_id": b.id, "mode": "offpeak", "capacity_kwh": 60, "charger_kw": 7.0, "session_kwh": 12}]
+    entry = await _setup(hass, vehicles=vehicles)
+    c = entry.runtime_data
+    va, vb = c.vehicles
+    assert (va.name, vb.name) == ("Tesla Model Y", "Tesla Model 3")                # names come from the devices
+    assert va.soc_entity == ia["soc"] and va.power_entity == ia["power"] and va.home_entity == ia["home"]
+    assert va.target_soc_entity == ia["limit"] and va.energy_stat == ia["energy"]
+    assert va.plug_entity == ia["cable"]                                           # cable sensor preferred...
+    assert vb.plug_entity == ib["state"]                                           # ...charging-state enum when there is none
+    info = {n["vehicle"]: n for n in c.ev_info}
+    ya, yb = info["Tesla Model Y"], info["Tesla Model 3"]
+    assert ya["plugged"] is True and ya["home"] is True and ya["probability"] == 1.0
+    assert ya["target_soc_pct"] == 90.0                                           # the car's own charge limit, not the fixed 80
+    assert ya["needed_kwh"] == round((90 - 40) / 100 * 75 / 0.9, 1)
+    assert yb["plugged"] is False and yb["home"] is False and yb["probability"] == 0.5
+    assert set(ya["entities"]) >= {"power", "plug", "home", "battery", "charge limit", "energy"}
+
+
+async def test_explicit_entities_override_a_vehicle_device(hass: HomeAssistant):
+    a, ia = _tesla(hass, "Tesla Model Y", "VINA")
+    hass.states.async_set("binary_sensor.my_plug", "off")
+    entry = await _setup(hass, vehicles=[{"device_id": a.id, "mode": "iog", "plug_entity": "binary_sensor.my_plug",
+                                          "name": "Family car"}])
+    c = entry.runtime_data
+    (v,) = c.vehicles
+    assert v.name == "Family car" and v.plug_entity == "binary_sensor.my_plug" and v.soc_entity == ia["soc"]
+    assert c.ev_info[0]["plugged"] is False                                       # the override wins over the cable sensor
+
+
+async def test_other_makes_fall_back_to_device_classes(hass: HomeAssistant):
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+    ce = MockConfigEntry(domain="kia_uvo")
+    ce.add_to_hass(hass)
+    dev = dr.async_get(hass).async_get_or_create(config_entry_id=ce.entry_id, identifiers={("kia_uvo", "x")}, name="Kia EV6")
+    reg = er.async_get(hass)
+    soc = reg.async_get_or_create("sensor", "kia_uvo", "ev_battery_level", config_entry=ce, device_id=dev.id,
+                                  original_device_class="battery", original_name="EV battery level").entity_id
+    plug = reg.async_get_or_create("binary_sensor", "kia_uvo", "plug", config_entry=ce, device_id=dev.id,
+                                   original_device_class="plug", original_name="EV battery plug").entity_id
+    hass.states.async_set(soc, "55", {"unit_of_measurement": "%"})
+    hass.states.async_set(plug, "on")
+    entry = await _setup(hass, vehicles=[{"device_id": dev.id, "mode": "offpeak"}])
+    (v,) = entry.runtime_data.vehicles
+    assert v.name == "Kia EV6" and v.soc_entity == soc and v.plug_entity == plug and v.power_entity is None
+
+
+async def test_vehicle_form_accepts_a_device_alone(hass: HomeAssistant):
+    a, _ = _tesla(hass, "Tesla Model Y", "VINA")
+    entry = await _setup(hass)
+    r = await hass.config_entries.options.async_init(entry.entry_id)
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "vehicles"})
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "vehicle_add"})
+    base = {"mode": "iog", "capacity_kwh": 75, "target_soc_pct": 80, "charger_kw": 7.0, "session_kwh": 0}
+    r = await hass.config_entries.options.async_configure(r["flow_id"], dict(base))               # neither name nor device
+    assert r["type"] == "form" and r["errors"] == {"base": "name_required"}
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {**base, "device_id": a.id})
+    assert r["type"] == "menu" and r["step_id"] == "vehicles"                                      # saved, name from the device
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "init"})
+    r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": "done"})
+    await hass.async_block_till_done()
+    saved = hass.config_entries.async_get_entry(entry.entry_id).options["vehicles"]
+    assert saved[0]["name"] == "Tesla Model Y" and saved[0]["device_id"] == a.id

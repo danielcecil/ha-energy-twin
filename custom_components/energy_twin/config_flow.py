@@ -10,6 +10,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector as sel
 
 from .const import *  # noqa: F403
+from . import ha_data
 from .menus import SECTIONS, TOP, VEHICLE_MENU, options as menu_options
 from .sim.presets import HARDWARE_PRESETS, TARIFF_PRESETS, apply_preset, preset_choices
 
@@ -136,12 +137,14 @@ STEPS: dict[str, list[tuple[str, Any, bool]]] = {
 VEHICLE_MODES = {"iog": "Intelligent Octopus Go (smart-charged, dispatch slots)", "offpeak": "Off-peak schedule only"}
 # key, selector, required, default
 VEHICLE_FIELDS: list[tuple[str, Any, bool, Any]] = [
-    ("name", _TEXT, True, ""),
+    ("device_id", sel.DeviceSelector(), False, None),
+    ("name", _TEXT, False, None),
     ("mode", _choice(VEHICLE_MODES), True, "offpeak"),
     ("power_entity", _ent(), False, None),
     ("plug_entity", _ent(), False, None),
     ("home_entity", _ent(), False, None),
     ("soc_entity", _ent(), False, None),
+    ("target_soc_entity", _ent(), False, None),
     ("capacity_kwh", _num(10, 200, 0.5, "kWh"), True, 60.0),
     ("target_soc_pct", _num(10, 100, 1, "%"), True, 80.0),
     ("charger_kw", _num(1.4, 22, 0.1, "kW"), True, 7.0),
@@ -297,23 +300,29 @@ class EnergyTwinOptionsFlow(_FlowBase, OptionsFlow):
         self._editing = user_input["name"]
         return await self.async_step_vehicle_add()
 
+    def _vehicle_form(self, cur: dict, errors: dict | None = None) -> ConfigFlowResult:
+        fields: dict = {}
+        for key, selector, required, default in VEHICLE_FIELDS:
+            val = cur.get(key, default)
+            kw: dict = {}
+            if required and val not in (None, ""):
+                kw["default"] = val
+            elif not required and val not in (None, ""):
+                kw["description"] = {"suggested_value": val}
+            fields[(vol.Required if required else vol.Optional)(key, **kw)] = selector
+        return self.async_show_form(step_id="vehicle_add", data_schema=vol.Schema(fields), errors=errors or {})
+
     async def async_step_vehicle_add(self, user_input=None) -> ConfigFlowResult:
         editing = getattr(self, "_editing", None)
-        cur = next((v for v in self._vehicles() if v["name"] == editing), {}) if editing else {}
+        cur = next((v for v in self._vehicles() if v["name"] == editing or v.get("device_id") == editing), {}) if editing else {}
         if user_input is None:
-            fields: dict = {}
-            for key, selector, required, default in VEHICLE_FIELDS:
-                val = cur.get(key, default)
-                kw: dict = {}
-                if required and val not in (None, ""):
-                    kw["default"] = val
-                elif not required and val not in (None, ""):
-                    kw["description"] = {"suggested_value": val}
-                fields[(vol.Required if required else vol.Optional)(key, **kw)] = selector
-            return self.async_show_form(step_id="vehicle_add", data_schema=vol.Schema(fields))
+            return self._vehicle_form(cur)
         veh = {k: v for k, v in user_input.items() if v not in (None, "")}
-        veh["name"] = veh["name"].strip()
-        vs = [v for v in self._vehicles() if v["name"] not in (editing, veh["name"])]
+        name = (veh.get("name") or "").strip() or (ha_data.device_name(self.hass, veh.get("device_id")) or "")
+        if not name:
+            return self._vehicle_form({**cur, **veh}, {"base": "name_required"})
+        veh["name"] = name
+        vs = [v for v in self._vehicles() if v.get("name") not in (editing, name)]
         self.opts[CONF_VEHICLES] = vs + [veh]
         self._editing = None
         return await self.async_step_vehicles()

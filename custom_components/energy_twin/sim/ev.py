@@ -27,7 +27,7 @@ _FALSE_PLUG = {"off", "false", "no", "unplugged", "disconnected", "not_connected
                "not plugged", "unplug", "idle_disconnected"}
 _TRUE_PLUG = {"on", "true", "yes", "plugged", "plugged_in", "plugged in", "connected", "charging", "complete",
               "completed", "waiting", "ready", "stopped", "starting", "pending", "preparing", "finishing",
-              "suspended", "fully_charged", "awaiting_start", "paused"}
+              "suspended", "fully_charged", "awaiting_start", "paused", "no_power", "nopower"}
 _HOME = {"home", "on", "true", "yes", "arrived", "at_home"}
 
 
@@ -79,6 +79,8 @@ class Vehicle:
     home_entity: str | None = None
     soc_entity: str | None = None
     energy_stat: str | None = None
+    target_soc_entity: str | None = None      # e.g. a Tesla's charge-limit number: the real target beats a fixed one
+    device_id: str | None = None
 
     @staticmethod
     def from_dict(d: dict) -> "Vehicle":
@@ -90,7 +92,8 @@ class Vehicle:
             session_kwh=float(d.get("session_kwh") or 0.0), plug_states=toks(d.get("plug_states")),
             home_states=toks(d.get("home_states")), power_entity=d.get("power_entity") or None,
             plug_entity=d.get("plug_entity") or None, home_entity=d.get("home_entity") or None,
-            soc_entity=d.get("soc_entity") or None, energy_stat=d.get("energy_stat") or None)
+            soc_entity=d.get("soc_entity") or None, energy_stat=d.get("energy_stat") or None,
+            target_soc_entity=d.get("target_soc_entity") or None, device_id=d.get("device_id") or None)
 
 
 @dataclass
@@ -146,6 +149,7 @@ class VehicleInfo:
     plugged: bool | None = None
     home: bool | None = None
     soc_pct: float | None = None
+    target_soc_pct: float | None = None   # from the car's own charge-limit entity, when there is one
     live_kw: float = 0.0
     delivered_kwh: float = 0.0           # delivered so far in the current session
     raw_plug: str | None = None
@@ -155,7 +159,8 @@ class VehicleInfo:
 def needed_kwh(v: Vehicle, learn: VehicleLearn, info: VehicleInfo) -> float:
     """Wall energy this car still wants in its current/next charge."""
     if info.soc_pct is not None:
-        return max(0.0, (v.target_soc_pct - info.soc_pct) / 100.0 * v.capacity_kwh) / CHARGE_EFF
+        target = info.target_soc_pct if info.target_soc_pct else v.target_soc_pct
+        return max(0.0, (target - info.soc_pct) / 100.0 * v.capacity_kwh) / CHARGE_EFF
     base = v.session_kwh or learn.typical_kwh()
     return max(0.0, base - info.delivered_kwh)
 
@@ -238,6 +243,7 @@ def build_ev_load(starts: list[datetime], tod: list[int], tz: ZoneInfo, tariff: 
             kw[i] += mine[i]
         notes.append({"vehicle": v.name, "mode": v.mode, "plugged": info.plugged, "home": info.home,
                       "raw_plug_state": info.raw_plug, "raw_home_state": info.raw_home, "soc_pct": info.soc_pct,
+                      "target_soc_pct": info.target_soc_pct or v.target_soc_pct,
                       "needed_kwh": round(e0, 1), "probability": round(p0, 2),
                       "expected_kwh_tonight": round(e0 * p0, 1), "via_dispatch_kwh": round(via_dispatch, 1),
                       "session_kwh_learned": round(lrn.typical_kwh(v.session_kwh), 1),

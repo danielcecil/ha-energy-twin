@@ -9,7 +9,7 @@ menus = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(menus)   # pure data module: no Home Assistant import needed
 
 F = {  # option key -> (label, help)
-    "power_entity": ("House power now (Home Mini)", "Whole-home import power sensor, W or kW. Used to drive the live twin."),
+    "power_entity": ("Charging power sensor - override", "Whole-home import power sensor, W or kW. Used to drive the live twin."),
     "ev_power_entities": ("Car charger power sensors", "Optional. Lets the twin separate EV load from house load, so the battery never 'feeds' a car."),
     "pv_now_entity": ("Expected solar generation now", "Real-time expected/forecast solar power sensor (W or kW), for the array size set below. Overrides the hourly forecast for the current slot."),
     "import_now_entity": ("Current import price", "Current tariff price entity (GBP/kWh or p/kWh, auto-detected)."),
@@ -105,12 +105,14 @@ SEC = {
 }
 
 VF = {  # vehicle form fields
-    "name": ("Vehicle name", "e.g. 'Tesla' - used to label the car in the dashboard."),
+    "device_id": ("Vehicle device", "Pick the car's device (e.g. your Tesla). Its battery, charger power, plugged-in, location, charge-limit and energy entities are found automatically. The fields below only override or add to that - or fill them all in for a car with no device."),
+    "target_soc_entity": ("Charge limit entity (%) - override", "Optional. e.g. a Tesla's charge-limit number. When present it is used as the charge target instead of the fixed value below."),
+    "name": ("Vehicle name", "Optional if you picked a device (its name is used). Used to label the car on the dashboard."),
     "mode": ("How it charges", "Only one car per account is usually on Intelligent Octopus Go. The other charges on the off-peak schedule."),
     "power_entity": ("Charging power sensor", "Optional. W or kW from the car or charger integration. Lets the twin see real charging and learn session sizes."),
-    "plug_entity": ("Plugged-in entity", "Optional. A binary sensor, or a charging-status sensor - states like on/off, connected/disconnected, charging, stopped are understood."),
-    "home_entity": ("At-home entity", "Optional. A device tracker / person / binary sensor. Any zone other than 'home' counts as away."),
-    "soc_entity": ("Battery level entity (%)", "Optional. With it the twin knows exactly how much the car still needs."),
+    "plug_entity": ("Plugged-in entity - override", "Optional. A binary sensor, or a charging-status sensor - states like on/off, connected/disconnected, charging, stopped are understood."),
+    "home_entity": ("At-home entity - override", "Optional. A device tracker / person / binary sensor. Any zone other than 'home' counts as away."),
+    "soc_entity": ("Battery level entity (%) - override", "Optional. With it the twin knows exactly how much the car still needs."),
     "capacity_kwh": ("Battery size (kWh)", ""), "target_soc_pct": ("Charge target (%)", ""),
     "charger_kw": ("Charger power (kW)", ""),
     "session_kwh": ("Typical energy per charge (kWh)", "0 = learn it from observed sessions. Used when the car has no battery-level entity."),
@@ -134,7 +136,7 @@ def vsteps():
     return {
       "vehicles": {"title": "Vehicles", "description": "Model each car separately so charging is predicted from whether it is plugged in, at home or dispatched - not averaged over every night.\n\nCurrent vehicles:\n{vehicles}",
                    "menu_options": menus.options(menus.VEHICLE_MENU)},
-      "vehicle_add": {"title": "Vehicle", "data": {k: v[0] for k, v in VF.items()}, "data_description": {k: v[1] for k, v in VF.items() if v[1]}},
+      "vehicle_add": {"title": "Vehicle", "description": "Pick the car's **device** and give it a mode - that is usually all you need. Charge target comes from the car's own charge limit when it has one.", "data": {k: v[0] for k, v in VF.items()}, "data_description": {k: v[1] for k, v in VF.items() if v[1]}},
       "vehicle_edit": {"title": "Edit which vehicle?", "data": {"name": "Vehicle"}},
       "vehicle_remove": {"title": "Remove which vehicle?", "data": {"name": "Vehicle"}},
     }
@@ -165,7 +167,7 @@ ENT = {
 doc = {
   "config": {"step": steps(["user", "hardware_preset", "hardware", "tariff_preset", "sources_live", "sources_octopus", "sources_solar_history"]),
              "abort": {"already_configured": "Home Energy Twin is already set up."}},
-  "options": {"step": {**steps(), **vsteps(), **{k: {"title": t, "description": d, "menu_options": menus.options(menus.TOP if k == "init" else menus.SECTIONS[k])}
+  "options": {"error": {"name_required": "Pick a vehicle device or enter a name."}, "step": {**steps(), **vsteps(), **{k: {"title": t, "description": d, "menu_options": menus.options(menus.TOP if k == "init" else menus.SECTIONS[k])}
              for k, (t, d) in menus.SECTION_TEXT.items()}}},
   "entity": {p: {k: {"name": v} for k, v in d.items()} for p, d in ENT.items()},
   "services": {
