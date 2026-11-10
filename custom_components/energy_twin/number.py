@@ -50,7 +50,8 @@ NUMBERS = (
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback) -> None:
-    async_add_entities([*(TwinNumber(entry.runtime_data, d) for d in NUMBERS), EventRateNumber(entry.runtime_data)])
+    async_add_entities([*(TwinNumber(entry.runtime_data, d) for d in NUMBERS), EventRateNumber(entry.runtime_data),
+                        BatteryLevelNumber(entry.runtime_data)])
 
 
 class TwinNumber(TwinEntity, NumberEntity):
@@ -88,3 +89,27 @@ class EventRateNumber(TwinEntity, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         self.coordinator.form["rate"] = value
         self.async_write_ha_state()
+
+
+class BatteryLevelNumber(TwinEntity, NumberEntity):
+    """Set the virtual battery's level by hand (the 'Battery state of charge' sensor shows it)."""
+
+    _attr_translation_key = "battery_level_set"
+    _attr_native_min_value, _attr_native_max_value, _attr_native_step = 0, 100, 1
+    _attr_native_unit_of_measurement = "%"
+    _attr_mode = NumberMode.SLIDER
+
+    def __init__(self, c) -> None:
+        super().__init__(c, "battery_level_set")
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.coordinator.hardware().battery_kwh > 0
+
+    @property
+    def native_value(self):
+        hw = self.coordinator.hardware()
+        return round(100 * self.coordinator.soc / hw.emax, 1) if hw.emax > 0 and self.coordinator.soc is not None else None
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self.coordinator.async_set_soc_pct(value)

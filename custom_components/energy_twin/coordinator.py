@@ -180,6 +180,12 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
                         reserve_pct=c[CONF_RESERVE], export_limit_kw=c[CONF_EXPORT_LIMIT],
                         cycle_cost_p=c[CONF_CYCLE_COST], import_limit_kw=self.import_limit_kw(c))
 
+    def start_soc(self, hw: Hardware | None = None) -> float:
+        """Where the virtual battery starts (first run, reset): the configured % of capacity, within its limits."""
+        hw = hw or self.hardware()
+        pct = float(self.cfg.get(CONF_START_SOC, 50.0))
+        return min(max(hw.emax * pct / 100.0, hw.emin), hw.emax)
+
     @staticmethod
     def import_limit_kw(c: dict) -> float:
         """Main cut-out fuse -> the most we plan to draw from the grid (0 = no limit set)."""
@@ -238,7 +244,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         hw = self.hardware()
         # restore the virtual battery level; clamp in case the battery was resized while we were off
         saved_soc = saved.get("soc")
-        self.soc = hw.emin if saved_soc is None else min(max(float(saved_soc), hw.emin), hw.emax)
+        self.soc = self.start_soc(hw) if saved_soc is None else min(max(float(saved_soc), hw.emin), hw.emax)
         self.acc = {**self.acc, **saved.get("acc", {})}
         self.learn_live = {k: evm.VehicleLearn.from_dict(v) for k, v in (saved.get("learn") or {}).items()}
         self.veh_rt = saved.get("veh_rt") or {}
@@ -302,8 +308,16 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.manual_events.clear()
         await self._refresh_all()
 
+    async def async_set_soc_pct(self, pct: float) -> None:
+        """Set the virtual battery level by hand (% of capacity; kept between your reserve and full)."""
+        hw = self.hardware()
+        self.soc = min(max(hw.emax * float(pct) / 100.0, hw.emin), hw.emax)
+        self.plan_dirty = True
+        self._save()
+        await self.async_refresh()
+
     async def async_reset_twin(self) -> None:
-        self.soc = self.hardware().emin
+        self.soc = self.start_soc()
         self.acc = {"day_key": "", "month_key": "", "day": _blank_bucket(), "month": _blank_bucket(),
                     "total": _blank_bucket()}
         self.plan_dirty = True
@@ -425,7 +439,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.hp_plan = None
         if hp.enabled:
             sl.new_kw, sl.exp_new_kw = await self._heat_load(starts, tod, cheap, ev_flag, tariff, hp, now)
-        hw_soc = self.soc if self.soc is not None else hw.emin
+        hw_soc = self.soc if self.soc is not None else self.start_soc(hw)
         res = await self.hass.async_add_executor_job(plan_horizon, sl, hw, st, hw_soc)
         self.diag = {
             "import_rate_slots": len(imp_rates or {}), "export_rate_slots": len(exp_rates or {}),
@@ -513,7 +527,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         c = self.cfg
         hw = self.hardware(c)
         if self.soc is None:
-            self.soc = hw.emin
+            self.soc = self.start_soc(hw)
         stale = self.plan is None or (now - self.plan.built).total_seconds() > REPLAN_SECONDS \
             or self._plan_index(now) is None
         if self.plan_dirty or stale:

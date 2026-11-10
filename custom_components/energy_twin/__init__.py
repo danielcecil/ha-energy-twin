@@ -8,10 +8,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
+from homeassistant.util import slugify
 from homeassistant.util import dt as dt_util
 
 from .const import (DOMAIN, SERVICE_ADD_EVENT, SERVICE_CLEAR_EVENTS, SERVICE_RECALC, SERVICE_RESET_TWIN,
-                    SERVICE_SWEEP)
+                    SERVICE_SET_SOC, SERVICE_SWEEP)
 from .coordinator import TwinCoordinator
 from .sim.models import GridEvent
 
@@ -20,6 +22,8 @@ PLATFORMS = [Platform.SENSOR, Platform.NUMBER, Platform.DATETIME, Platform.SELEC
 type TwinConfigEntry = ConfigEntry[TwinCoordinator]
 
 SCENARIO_SCHEMA = vol.Schema({vol.Optional("scenario"): cv.string})
+SET_SOC_SCHEMA = vol.Schema({vol.Required("percent"): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+                             vol.Optional("scenario"): cv.string})
 ADD_EVENT_SCHEMA = vol.Schema({
     vol.Required("kind"): vol.In(["power_up", "power_down"]),
     vol.Required("start"): cv.datetime,
@@ -65,6 +69,10 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             await c.async_run_sweep(call.data["battery_kwh"], call.data["pv_kwp"], call.data.get("inverter_kw"),
                                     call.data["strategy"])
 
+    async def set_soc(call: ServiceCall) -> None:
+        for c in _targets(hass, call, False):
+            await c.async_set_soc_pct(call.data["percent"])
+
     async def recalc(call: ServiceCall) -> None:
         for c in _targets(hass, call, True):
             await c.async_recalculate()
@@ -78,6 +86,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     hass.services.async_register(DOMAIN, SERVICE_SWEEP, sweep, schema=SWEEP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_RECALC, recalc, schema=SCENARIO_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_RESET_TWIN, reset, schema=SCENARIO_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_SET_SOC, set_soc, schema=SET_SOC_SCHEMA)
     return True
 
 
@@ -87,8 +96,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: TwinConfigEntry) -> bool
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _normalise_entity_ids(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_options_updated))
     return True
+
+
+CANONICAL_NAME = "Home Energy Twin"
+
+
+def _normalise_entity_ids(hass: HomeAssistant, entry: TwinConfigEntry) -> None:
+    """Keep the first setup's entity IDs stable (home_energy_twin_*) whatever the setup is called.
+
+    Home Assistant builds an entity ID from the device name when the entity is first created, so renaming a setup
+    ("Home Energy Twin - PW3 13.5 kWh") makes every entity added afterwards come out with a different prefix and
+    breaks anything that refers to them, including the shipped dashboard. IDs that are still the auto-generated
+    ones are moved to the canonical form; an ID you set yourself, or one already taken, is never touched.
+    """
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if not entries or entries[0].entry_id != entry.entry_id or entry.title == CANONICAL_NAME:
+        return
+    reg = er.async_get(hass)
+    for ent in er.async_entries_for_config_entry(reg, entry.entry_id):
+        name = ent.original_name
+        if not name or not isinstance(name, str):
+            continue
+        auto = f"{ent.domain}.{slugify(f'{entry.title} {name}')}"
+        canonical = f"{ent.domain}.{slugify(f'{CANONICAL_NAME} {name}')}"
+        if ent.entity_id != auto or canonical == auto:
+            continue                                                # customised by the user, or nothing to do
+        if reg.async_get(canonical) is not None or hass.states.get(canonical) is not None:
+            continue
+        _LOGGER.info("Renaming %s to %s so the dashboard keeps working", ent.entity_id, canonical)
+        reg.async_update_entity(ent.entity_id, new_entity_id=canonical)
 
 
 async def _options_updated(hass: HomeAssistant, entry: TwinConfigEntry) -> None:

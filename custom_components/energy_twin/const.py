@@ -80,6 +80,7 @@ CONF_RTE = "round_trip_eff"
 CONF_RESERVE = "reserve_pct"
 CONF_EXPORT_LIMIT = "export_limit_kw"
 CONF_CYCLE_COST = "cycle_cost_p"
+CONF_START_SOC = "start_soc_pct"                 # where the virtual battery starts (first run / reset)
 
 # ---- costs / finance -----------------------------------------------------------------------
 CONF_SYSTEM_COST = "system_cost"                  # one installed price for the whole setup
@@ -127,7 +128,7 @@ DEFAULTS: dict = {
     CONF_PU_IMPORT_P: 0.0, CONF_PD_EXPORT_P: 30.0, CONF_PD_BONUS_P: 0.0,
     CONF_PV_KWP: 6.0, CONF_INVERTER_KW: 5.0, CONF_PV_YIELD: 950.0,
     CONF_BATT_KWH: 10.0, CONF_BATT_KW: 5.0, CONF_RTE: 0.90, CONF_RESERVE: 10.0,
-    CONF_EXPORT_LIMIT: 3.68, CONF_CYCLE_COST: 0.0,
+    CONF_EXPORT_LIMIT: 3.68, CONF_CYCLE_COST: 0.0, CONF_START_SOC: 50.0,
     CONF_SYSTEM_COST: 12000.0, CONF_GRANT: 0.0, CONF_FIN_MODE: "cash", CONF_FIN_FEE: 0.0, CONF_FIN_MONTHLY: 0.0,
     CONF_DEPOSIT: 0.0, CONF_APR: 0.0, CONF_TERM: 0,
     CONF_ESCALATION: 3.0, CONF_PV_DEG: 0.5, CONF_BATT_DEG: 2.0, CONF_DISCOUNT: 3.0, CONF_HORIZON: 20,
@@ -156,3 +157,4 @@ SERVICE_CLEAR_EVENTS = "clear_events"
 SERVICE_SWEEP = "run_sweep"
 SERVICE_RECALC = "recalculate"
 SERVICE_RESET_TWIN = "reset_twin"
+SERVICE_SET_SOC = "set_battery_level"

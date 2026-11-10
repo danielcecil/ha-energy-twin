@@ -97,7 +97,8 @@
           "round_trip_eff": "Round-trip efficiency (0-1)",
           "reserve_pct": "Reserve (%)",
           "export_limit_kw": "Export limit (kW)",
-          "cycle_cost_p": "Wear cost (p per kWh discharged)"
+          "cycle_cost_p": "Wear cost (p per kWh discharged)",
+          "start_soc_pct": "Starting battery level (%)"
         },
         "data_description": {
           "pv_kwp": "0 = no solar.",
@@ -106,7 +107,8 @@
           "battery_kwh": "0 = no battery.",
           "reserve_pct": "Never discharged below this.",
           "export_limit_kw": "3.68 kW is the G98 single-phase default.",
-          "cycle_cost_p": "Optional. Makes the planner avoid low-value cycling."
+          "cycle_cost_p": "Optional. Makes the planner avoid low-value cycling.",
+          "start_soc_pct": "Where the virtual battery starts on first run and after a reset. You can also set it any time from the dashboard or with the set_battery_level service."
         }
       }
     },
@@ -315,7 +317,8 @@
           "round_trip_eff": "Round-trip efficiency (0-1)",
           "reserve_pct": "Reserve (%)",
           "export_limit_kw": "Export limit (kW)",
-          "cycle_cost_p": "Wear cost (p per kWh discharged)"
+          "cycle_cost_p": "Wear cost (p per kWh discharged)",
+          "start_soc_pct": "Starting battery level (%)"
         },
         "data_description": {
           "pv_kwp": "0 = no solar.",
@@ -324,7 +327,8 @@
           "battery_kwh": "0 = no battery.",
           "reserve_pct": "Never discharged below this.",
           "export_limit_kw": "3.68 kW is the G98 single-phase default.",
-          "cycle_cost_p": "Optional. Makes the planner avoid low-value cycling."
+          "cycle_cost_p": "Optional. Makes the planner avoid low-value cycling.",
+          "start_soc_pct": "Where the virtual battery starts on first run and after a reset. You can also set it any time from the dashboard or with the set_battery_level service."
         }
       },
       "finance": {
@@ -698,6 +702,9 @@
       },
       "event_rate_p": {
         "name": "Event rate override"
+      },
+      "battery_level_set": {
+        "name": "Set battery level"
       }
     },
     "select": {
@@ -822,6 +829,20 @@
         "strategy": {
           "name": "Strategy",
           "description": "rules is much faster"
+        }
+      }
+    },
+    "set_battery_level": {
+      "name": "Set battery level",
+      "description": "Set the virtual battery's level by hand.",
+      "fields": {
+        "percent": {
+          "name": "Level (%)",
+          "description": "Kept between your reserve and full."
+        },
+        "scenario": {
+          "name": "Scenario",
+          "description": "Scenario name; blank = the first one"
         }
       }
     },

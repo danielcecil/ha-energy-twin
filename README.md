@@ -7,7 +7,8 @@ It reads your real load (Octopus Home Mini), your real tariff (Octopus Energy in
 Intelligent Octopus Go) and your solar forecast (Forecast.Solar / Solcast / Open-Meteo), then
 runs a **virtual** battery and array alongside your house. It never controls hardware.
 
-* **Live twin** - every minute a virtual battery is stepped against your actual load; a ledger
+* **Live twin** - every minute a virtual battery (starts at 50 %; set it any time with the *Set battery level* slider
+  or the `set_battery_level` service) is stepped against your actual load; a ledger
   shows today / month / total "what it would have saved".
 * **Planner** - every 5 min it plans the next ~33 h: how much to charge in the cheap window, when to
   use solar, and **how much battery to export** when there's spare capacity (a dynamic-programming
@@ -103,7 +104,8 @@ fed by the same real load, prices, forecast and Power Up/Down events. Add as man
 to reuse your entities. The dashboard's **Compare** tab finds every scenario automatically and ranks
 them by NPV with the annual bill today-vs-setup, where the saving comes from (solar / battery / heat pump), a payback
 race, a month-by-month table and a live "saved so far" ledger. Power Up/Down events are shared across scenarios;
-Octopus/forecast/history lookups are cached and shared. Per-scenario tabs show one scenario -
+Octopus/forecast/history lookups are cached and shared. The first setup's entities always keep the `home_energy_twin_*` IDs the dashboard uses, however you rename it
+(auto-generated IDs are migrated on load; IDs you set yourself are left alone). Per-scenario tabs show one scenario -
 `python scripts/gen_dashboard.py <entity_prefix> "<title>"` makes one for another.
 
 ## What to point it at

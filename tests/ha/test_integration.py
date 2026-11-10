@@ -739,7 +739,7 @@ async def test_virtual_battery_level_survives_a_restart(hass: HomeAssistant):
     other.add_to_hass(hass)
     blank = TwinCoordinator(hass, other)
     await blank.async_setup()
-    assert blank.soc == pytest.approx(blank.hardware().emin)
+    assert blank.soc == pytest.approx(0.5 * blank.hardware().emax)           # starts at 50 % by default
     # a smaller battery than the saved level is clamped rather than showing >100 %
     await entry.runtime_data._store.async_save({"soc": 12.0})
     small = MockConfigEntry(domain=DOMAIN, title="Small", options={"battery_kwh": 5.0})
@@ -748,3 +748,56 @@ async def test_virtual_battery_level_survives_a_restart(hass: HomeAssistant):
     sc._store = c._store                                                    # same saved data
     await sc.async_setup()
     assert sc.soc == pytest.approx(5.0)
+
+
+async def test_battery_level_starts_at_50_and_can_be_set(hass: HomeAssistant):
+    entry = await _setup(hass, strategy="rules")
+    c = entry.runtime_data
+    hw = c.hardware()
+    sensor = lambda: float(hass.states.get("sensor.home_energy_twin_battery_state_of_charge").state)  # noqa: E731
+    assert c.soc == pytest.approx(0.5 * hw.emax, abs=0.05) and 49 < sensor() < 51          # fresh start: 50 %
+    num = "number.home_energy_twin_set_battery_level"
+    assert float(hass.states.get(num).state) == pytest.approx(50, abs=1)
+    # slider
+    await hass.services.async_call("number", "set_value", {"entity_id": num, "value": 80}, blocking=True)
+    assert c.soc == pytest.approx(0.8 * hw.emax, abs=0.05) and 79 < sensor() < 81
+    # service (for automations)
+    await hass.services.async_call(DOMAIN, "set_battery_level", {"percent": 30}, blocking=True)
+    assert c.soc == pytest.approx(0.3 * hw.emax, abs=0.05)
+    # can't go below your reserve (10 %) or above full
+    await hass.services.async_call(DOMAIN, "set_battery_level", {"percent": 0}, blocking=True)
+    assert c.soc == pytest.approx(hw.emin, abs=0.05)
+    await hass.services.async_call("number", "set_value", {"entity_id": num, "value": 100}, blocking=True)
+    assert c.soc == pytest.approx(hw.emax, abs=0.05)
+    # the plan is rebuilt from the new level
+    assert c.plan.soc0 == pytest.approx(hw.emax, abs=0.05)
+    # reset returns to the configured starting level
+    await c.async_set_options({"start_soc_pct": 60.0}, annual=False)
+    await hass.services.async_call("button", "press", {"entity_id": "button.home_energy_twin_reset_virtual_battery"}, blocking=True)
+    assert c.soc == pytest.approx(0.6 * hw.emax, abs=0.05)
+    with pytest.raises(Exception):
+        await hass.services.async_call(DOMAIN, "set_battery_level", {"percent": 150}, blocking=True)   # out of range is rejected
+
+
+async def test_renamed_setup_keeps_the_dashboard_entity_ids(hass: HomeAssistant):
+    """Regression: a setup called 'Home Energy Twin - PW3 13.5 kWh' gave new entities a longer prefix and the
+    dashboard showed 'Entity not found' for everything created after the rename."""
+    import pathlib, re
+    from homeassistant.helpers import entity_registry as er
+    entry = await _setup(hass, title="Home Energy Twin - PW3 13.5 kWh", hp_enabled=True)
+    await hass.async_block_till_done()
+    txt = pathlib.Path("dashboard/energy_twin_dashboard.yaml").read_text()
+    wanted = set(re.findall(r"\b((?:sensor|number|select|switch|button|datetime)\.home_energy_twin_[a-z_]+)", txt))
+    missing = sorted(e for e in wanted if hass.states.get(e) is None)
+    assert missing == [], missing
+    assert not [s.entity_id for s in hass.states.async_all() if "pw3_13_5" in s.entity_id]     # no long-prefixed leftovers
+    # a second setup is NOT renamed (only the first one backs the shipped dashboard)
+    b = await _setup(hass, title="Big battery", strategy="rules")
+    assert hass.states.get("sensor.big_battery_battery_state_of_charge") is not None
+    # an ID the user chose themselves is left alone
+    reg = er.async_get(hass)
+    e = reg.async_get("sensor.home_energy_twin_grid_power")
+    reg.async_update_entity(e.entity_id, new_entity_id="sensor.my_grid_power")
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert reg.async_get("sensor.my_grid_power") is not None and reg.async_get("sensor.home_energy_twin_grid_power") is None

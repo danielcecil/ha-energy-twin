@@ -356,6 +356,12 @@ views:
             name: Tonight's charge target
             min: 0
             max: 100
+      - type: entities
+        title: Virtual battery
+        show_header_toggle: false
+        entities:
+          - {entity: number.home_energy_twin_set_battery_level, name: Set level (%)}
+          - {entity: button.home_energy_twin_reset_virtual_battery, name: Reset to starting level}
       - type: grid
         columns: 3
         square: false
