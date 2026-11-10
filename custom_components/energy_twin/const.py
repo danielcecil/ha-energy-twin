@@ -26,6 +26,8 @@ CONF_VEHICLES = "vehicles"                            # list of per-car dicts (s
 
 # ---- heat pump / supply --------------------------------------------------------------------
 CONF_GAS_STAT = "gas_stat"                     # gas consumption statistic (kWh)
+CONF_GAS_RATE_ENTITY = "gas_rate_entity"       # current gas unit rate (overrides the fixed number)
+CONF_GAS_STANDING_ENTITY = "gas_standing_entity"
 CONF_OUTDOOR_ENTITY = "outdoor_temp_entity"
 CONF_OUTDOOR_STAT = "outdoor_temp_stat"        # statistic id for outdoor temperature history (default: the entity)
 CONF_WEATHER_ENTITY = "weather_entity"         # hourly forecast for the planner

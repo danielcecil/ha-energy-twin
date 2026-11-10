@@ -74,16 +74,16 @@
           "forecast_device": "Solar forecast device",
           "forecast_ref_kwp": "Forecast array size override (kWp)",
           "forecast_scale_pct": "Forecast confidence (%)",
-          "consumption_stat": "Home consumption statistic",
-          "ev_stats": "EV energy statistics",
+          "consumption_stat": "Home electricity consumption sensor (kWh)",
+          "ev_stats": "Other EV / charger energy sensors (kWh)",
           "history_days": "Days of history to learn from"
         },
         "data_description": {
           "forecast_device": "Pick your Forecast.Solar device - that is all. Its sensors and array size are found automatically. Leave blank to auto-use it if it is the only one installed.",
           "forecast_ref_kwp": "Optional. Normally read from the Forecast.Solar device. The twin scales that array to the one you are modelling.",
           "forecast_scale_pct": "100 = trust the forecast. Lower (e.g. 85) makes the planner assume less sun than forecast, so it charges more overnight.",
-          "consumption_stat": "Long-term statistic id for whole-home import kWh (an energy sensor, or e.g. octopus_energy:electricity_<serial>_<mpan>_import_consumption - see Developer tools > Statistics).",
-          "ev_stats": "Comma-separated statistic ids for your chargers' kWh. If blank, off-peak demand above the night base load is assumed to be the cars."
+          "consumption_stat": "Your whole-home import kWh total - e.g. the Octopus electricity 'Current Total Consumption' sensor. Its long-term history teaches the twin your usage pattern.",
+          "ev_stats": "Optional. Only needed for cars you did not add under Vehicles. If blank, off-peak demand above the night base load is assumed to be the cars."
         }
       },
       "hardware": {
@@ -192,32 +192,34 @@
           "forecast_device": "Solar forecast device",
           "forecast_ref_kwp": "Forecast array size override (kWp)",
           "forecast_scale_pct": "Forecast confidence (%)",
-          "consumption_stat": "Home consumption statistic",
-          "ev_stats": "EV energy statistics",
+          "consumption_stat": "Home electricity consumption sensor (kWh)",
+          "ev_stats": "Other EV / charger energy sensors (kWh)",
           "history_days": "Days of history to learn from"
         },
         "data_description": {
           "forecast_device": "Pick your Forecast.Solar device - that is all. Its sensors and array size are found automatically. Leave blank to auto-use it if it is the only one installed.",
           "forecast_ref_kwp": "Optional. Normally read from the Forecast.Solar device. The twin scales that array to the one you are modelling.",
           "forecast_scale_pct": "100 = trust the forecast. Lower (e.g. 85) makes the planner assume less sun than forecast, so it charges more overnight.",
-          "consumption_stat": "Long-term statistic id for whole-home import kWh (an energy sensor, or e.g. octopus_energy:electricity_<serial>_<mpan>_import_consumption - see Developer tools > Statistics).",
-          "ev_stats": "Comma-separated statistic ids for your chargers' kWh. If blank, off-peak demand above the night base load is assumed to be the cars."
+          "consumption_stat": "Your whole-home import kWh total - e.g. the Octopus electricity 'Current Total Consumption' sensor. Its long-term history teaches the twin your usage pattern.",
+          "ev_stats": "Optional. Only needed for cars you did not add under Vehicles. If blank, off-peak demand above the night base load is assumed to be the cars."
         }
       },
       "sources_heat": {
         "title": "Heat pump data",
         "description": "Gas history and outdoor temperature let the twin work out how much of your gas is heating and how much is hot water.",
         "data": {
-          "gas_stat": "Gas consumption statistic",
+          "gas_stat": "Gas consumption sensor (kWh)",
+          "gas_rate_entity": "Gas unit rate sensor",
+          "gas_standing_entity": "Gas standing charge sensor",
           "outdoor_temp_entity": "Outdoor temperature sensor",
-          "outdoor_temp_stat": "Outdoor temperature statistic",
           "weather_entity": "Weather entity (hourly forecast)",
           "tank_temp_entity": "Hot water tank temperature"
         },
         "data_description": {
-          "gas_stat": "Statistic id of your gas kWh (the Octopus gas consumption sensor). Used to split hot water from heating.",
-          "outdoor_temp_entity": "Used to fit gas use against weather, and to nudge the forecast.",
-          "outdoor_temp_stat": "Optional. Statistic id with temperature history. Blank = use the sensor above.",
+          "gas_stat": "Your gas meter's kWh total - e.g. the Octopus gas 'Current Total Consumption' or 'Accumulative Consumption' sensor (kWh, not m³). Its long-term history is used to split hot water from heating.",
+          "gas_rate_entity": "Your current gas price per kWh (e.g. the Octopus gas 'Current Rate' sensor, GBP/kWh or p/kWh). Used instead of the fixed rate when set.",
+          "gas_standing_entity": "Optional. e.g. the Octopus gas 'Current Standing Charge' sensor (per day). Counted as saved if you disconnect gas.",
+          "outdoor_temp_entity": "Its history is used to fit gas use against weather, and its current value nudges the forecast.",
           "weather_entity": "Optional. Gives the planner the real forecast instead of a seasonal curve.",
           "tank_temp_entity": "Optional. If you have a real tank sensor it overrides the model."
         }
@@ -270,8 +272,8 @@
           "cooking_gas_kwh_day": "Gas hob use (kWh/day)",
           "induction_ratio": "Induction electric per gas kWh",
           "fallback_annual_gas_kwh": "Typical annual gas (kWh)",
-          "gas_unit_p": "Gas unit rate (p/kWh)",
-          "gas_standing_p_day": "Gas standing charge (p/day)",
+          "gas_unit_p": "Gas unit rate - fallback (p/kWh)",
+          "gas_standing_p_day": "Gas standing charge - fallback (p/day)",
           "gas_disconnect": "Disconnect gas afterwards",
           "hp_cost": "Heat pump + tank installed (£)",
           "hp_grant": "Grant (£)",
@@ -282,7 +284,8 @@
           "boiler_eff_dhw": "Lower than heating: combis lose a lot on short draws.",
           "induction_ratio": "~0.5: induction is roughly twice as efficient.",
           "fallback_annual_gas_kwh": "Used until enough gas + temperature history exists.",
-          "gas_unit_p": "Check your own tariff.",
+          "gas_unit_p": "Used only if no gas rate sensor is set (or it is unavailable).",
+          "gas_standing_p_day": "Used only if no standing charge sensor is set.",
           "gas_disconnect": "Counts the avoided standing charge as a saving.",
           "hp_grant": "e.g. the Boiler Upgrade Scheme - check current eligibility and amount."
         }
@@ -411,7 +414,7 @@
           "target_soc_pct": "Charge target (%)",
           "charger_kw": "Charger power (kW)",
           "session_kwh": "Typical energy per charge (kWh)",
-          "energy_stat": "Energy statistic id",
+          "energy_stat": "Charging energy sensor (kWh) - override",
           "plug_states": "Plugged-in states (override)",
           "home_states": "At-home states (override)"
         },
@@ -425,7 +428,7 @@
           "home_entity": "Optional. A device tracker / person / binary sensor. Any zone other than 'home' counts as away.",
           "soc_entity": "Optional. With it the twin knows exactly how much the car still needs.",
           "session_kwh": "0 = learn it from observed sessions. Used when the car has no battery-level entity.",
-          "energy_stat": "Optional. Long-term kWh statistic of this car's charging, so the twin can learn its pattern from history straight away.",
+          "energy_stat": "Optional. Found automatically for a Tesla. Its history lets the twin learn this car's pattern straight away.",
           "plug_states": "Only if your integration uses unusual wording. Comma-separated, e.g. 'ready,charging'. Blank = auto-detect.",
           "home_states": "Comma-separated, e.g. 'home,garage'. Blank = auto-detect."
         }

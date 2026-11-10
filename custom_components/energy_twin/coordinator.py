@@ -187,6 +187,15 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         phases = 3 if str(c.get(CONF_PHASES, "1")) == "3" else 1
         return amps * float(c.get(CONF_VOLTS) or 230) * phases / 1000.0 * float(c.get(CONF_FUSE_PCT, 90)) / 100.0
 
+    def _live_gas_p(self, c: dict) -> float:
+        """Gas unit rate: your rate sensor if set and readable, otherwise the fixed number."""
+        v = ha_data.price_p(self._state(c.get(CONF_GAS_RATE_ENTITY)))
+        return v if v is not None and v > 0 else c[CONF_GAS_P]
+
+    def _live_standing_p(self, c: dict) -> float:
+        v = ha_data.pence_per_day(self._state(c.get(CONF_GAS_STANDING_ENTITY)))
+        return v if v is not None and v >= 0 else c[CONF_GAS_STANDING]
+
     def heat_params(self, cfg: dict | None = None) -> heatm.HeatParams:
         c = cfg or self.cfg
         return heatm.HeatParams(
@@ -195,7 +204,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             hp_elec_max_kw=c[CONF_HP_ELEC_KW], hp_capacity_kw=c[CONF_HP_CAP_KW], flow_temp_c=c[CONF_FLOW_C],
             carnot_frac=c[CONF_CARNOT], base_temp_c=c[CONF_BASE_TEMP], boiler_eff_heating=c[CONF_BOILER_EFF_H],
             boiler_eff_dhw=c[CONF_BOILER_EFF_D], cooking_gas_kwh_day=c[CONF_COOK_GAS], induction_ratio=c[CONF_INDUCTION],
-            fallback_annual_gas_kwh=c[CONF_FALLBACK_GAS], gas_unit_p=c[CONF_GAS_P], gas_standing_p_day=c[CONF_GAS_STANDING],
+            fallback_annual_gas_kwh=c[CONF_FALLBACK_GAS], gas_unit_p=self._live_gas_p(c), gas_standing_p_day=self._live_standing_p(c),
             gas_disconnect=bool(c[CONF_GAS_DISCONNECT]))
 
     def tariff(self, cfg: dict | None = None) -> TariffConfig:
@@ -425,7 +434,9 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "live_pv_entity": live_pv is not None,
             "vehicles": self.ev_info,
             **self._fc_diag,
-            "heat_pump": ({"temps_from": self._temps_source, "gas_model": self.gas_model.source,
+            "heat_pump": ({"gas_rate_p": round(hp.gas_unit_p, 2), "gas_standing_p_day": round(hp.gas_standing_p_day, 1),
+                           "gas_rate_from": "sensor" if ha_data.price_p(self._state(c.get(CONF_GAS_RATE_ENTITY))) else "fixed number",
+                           "temps_from": self._temps_source, "gas_model": self.gas_model.source,
                            "tank_kwh": round(self.tank_kwh or 0.0, 1)} if hp.enabled else "off"),
             "fuse_limit_kw": round(hw.import_limit_kw, 1),
         }
@@ -672,7 +683,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
     async def _async_load_history(self) -> None:
         c = self.cfg
         stat = (c.get(CONF_CONSUMPTION_STAT) or "").strip()
-        ev_ids = [s.strip() for s in (c.get(CONF_EV_STATS) or "").split(",") if s.strip()]
+        raw_ev = c.get(CONF_EV_STATS) or []
+        ev_ids = [x.strip() for x in (raw_ev.split(",") if isinstance(raw_ev, str) else raw_ev) if x and x.strip()]
         veh_stats = {v.name: v.energy_stat for v in self.vehicles if v.energy_stat}
         ev_ids = list(dict.fromkeys(ev_ids + list(veh_stats.values())))
         ids, days = ([stat] if stat else []) + ev_ids, int(c[CONF_HISTORY_DAYS])

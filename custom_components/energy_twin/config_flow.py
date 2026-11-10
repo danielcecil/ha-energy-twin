@@ -32,6 +32,13 @@ def _choice(options: dict[str, str]):
         mode=sel.SelectSelectorMode.DROPDOWN))
 
 
+def _sensor(multiple: bool = False, device_class: str | None = None):
+    cfg: dict = {"domain": "sensor", "multiple": multiple}
+    if device_class:
+        cfg["device_class"] = device_class
+    return sel.EntitySelector(sel.EntitySelectorConfig(**cfg))
+
+
 _TIME, _BOOL, _TEXT = sel.TimeSelector(), sel.BooleanSelector(), sel.TextSelector()
 
 # step -> ordered [(key, selector, required)]
@@ -54,14 +61,15 @@ STEPS: dict[str, list[tuple[str, Any, bool]]] = {
         (CONF_FORECAST_DEVICE, sel.DeviceSelector(sel.DeviceSelectorConfig(integration="forecast_solar")), False),
         (CONF_FORECAST_REF_KWP, _num(0.1, 100, 0.1, "kWp"), False),
         (CONF_FC_SCALE, _num(40, 150, 1, "%"), True),
-        (CONF_CONSUMPTION_STAT, _TEXT, False),
-        (CONF_EV_STATS, _TEXT, False),
+        (CONF_CONSUMPTION_STAT, _sensor(device_class="energy"), False),
+        (CONF_EV_STATS, _sensor(True, "energy"), False),
         (CONF_HISTORY_DAYS, _num(14, 730, 1, "days"), False),
     ],
     "sources_heat": [
-        (CONF_GAS_STAT, _TEXT, False),
+        (CONF_GAS_STAT, _sensor(device_class="energy"), False),
+        (CONF_GAS_RATE_ENTITY, _sensor(), False),
+        (CONF_GAS_STANDING_ENTITY, _sensor(), False),
         (CONF_OUTDOOR_ENTITY, _ent(), False),
-        (CONF_OUTDOOR_STAT, _TEXT, False),
         (CONF_WEATHER_ENTITY, _ent(), False),
         (CONF_TANK_TEMP_ENTITY, _ent(), False),
     ],
@@ -149,7 +157,7 @@ VEHICLE_FIELDS: list[tuple[str, Any, bool, Any]] = [
     ("target_soc_pct", _num(10, 100, 1, "%"), True, 80.0),
     ("charger_kw", _num(1.4, 22, 0.1, "kW"), True, 7.0),
     ("session_kwh", _num(0, 150, 0.5, "kWh"), True, 0.0),
-    ("energy_stat", _TEXT, False, None),
+    ("energy_stat", _sensor(device_class="energy"), False, None),
     ("plug_states", _TEXT, False, None),
     ("home_states", _TEXT, False, None),
 ]

@@ -551,3 +551,51 @@ async def test_vehicle_form_accepts_a_device_alone(hass: HomeAssistant):
     await hass.async_block_till_done()
     saved = hass.config_entries.async_get_entry(entry.entry_id).options["vehicles"]
     assert saved[0]["name"] == "Tesla Model Y" and saved[0]["device_id"] == a.id
+
+
+async def test_gas_rate_and_standing_charge_entities(hass: HomeAssistant):
+    hass.states.async_set("sensor.gas_rate", "0.0612", {"unit_of_measurement": "GBP/kWh"})
+    hass.states.async_set("sensor.gas_standing", "0.2915", {"unit_of_measurement": "GBP"})
+    entry = await _setup(hass, hp_enabled=True, strategy="rules", gas_rate_entity="sensor.gas_rate",
+                         gas_standing_entity="sensor.gas_standing", gas_unit_p=6.0, gas_standing_p_day=30.0)
+    c = entry.runtime_data
+    hp = c.heat_params()
+    assert hp.gas_unit_p == pytest.approx(6.12) and hp.gas_standing_p_day == pytest.approx(29.15)   # sensors, in pence
+    assert c.diag["heat_pump"]["gas_rate_from"] == "sensor" and c.diag["heat_pump"]["gas_rate_p"] == 6.12
+    await c._async_annual()
+    h = c.annual["heat"]
+    assert h["gas_cost_avoided"] == pytest.approx(h["gas_kwh_displaced"] * 6.12 / 100, abs=0.05)
+    assert h["gas_standing_avoided"] == pytest.approx(29.15 * 365 / 100, abs=0.05)
+    # sensor goes unavailable -> the fixed numbers take over, nothing breaks
+    hass.states.async_set("sensor.gas_rate", "unavailable")
+    hass.states.async_set("sensor.gas_standing", "unknown")
+    assert c.heat_params().gas_unit_p == 6.0 and c.heat_params().gas_standing_p_day == 30.0
+    # a p/kWh sensor works too
+    hass.states.async_set("sensor.gas_rate", "5.9", {"unit_of_measurement": "p/kWh"})
+    assert c.heat_params().gas_unit_p == pytest.approx(5.9)
+
+
+async def test_consumption_and_gas_fields_are_entity_pickers(hass: HomeAssistant):
+    from homeassistant.helpers import selector as sel
+    entry = await _setup(hass)
+    mgr = hass.config_entries.options
+
+    async def fields(section, step):
+        r = await mgr.async_init(entry.entry_id)
+        r = await mgr.async_configure(r["flow_id"], {"next_step_id": section})
+        r = await mgr.async_configure(r["flow_id"], {"next_step_id": step})
+        return {str(k): v for k, v in r["data_schema"].schema.items()}
+
+    heat = await fields("menu_heat", "sources_heat")
+    for key in ("gas_stat", "gas_rate_entity", "gas_standing_entity", "outdoor_temp_entity", "weather_entity"):
+        assert isinstance(heat[key], sel.EntitySelector), key
+    assert "outdoor_temp_stat" not in heat
+    solar = await fields("menu_sources", "sources_solar_history")
+    assert isinstance(solar["consumption_stat"], sel.EntitySelector)
+    assert isinstance(solar["ev_stats"], sel.EntitySelector)
+
+
+async def test_old_text_ev_stats_setting_still_loads(hass: HomeAssistant):
+    entry = await _setup(hass, ev_stats="sensor.car_a_energy, sensor.car_b_energy", consumption_stat="sensor.house_kwh")
+    await entry.runtime_data._async_load_history()          # a comma-separated string from an older version must not crash
+    assert entry.runtime_data.profile is not None

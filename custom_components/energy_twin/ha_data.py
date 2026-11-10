@@ -65,6 +65,17 @@ def price_p(state: State | None) -> float | None:
     return v * 100.0 if abs(v) < 2.0 else v
 
 
+def pence_per_day(state: State | None) -> float | None:
+    """Standing-charge sensor in GBP/day or p/day -> pence per day."""
+    v = to_float(state)
+    if v is None:
+        return None
+    unit = (state.attributes.get("unit_of_measurement") or "").lower()
+    if unit.startswith("p") or "pence" in unit or "gbx" in unit:
+        return v
+    return v * 100.0 if ("gbp" in unit or "£" in unit or abs(v) < 5.0) else v
+
+
 def parse_rates(states: list[State | None]) -> dict[datetime, float]:
     """Octopus 'rates' attribute lists -> {30-min UTC start: pence/kWh}."""
     out: dict[datetime, float] = {}

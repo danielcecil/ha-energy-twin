@@ -54,6 +54,9 @@ energy statistic. Integrations word their states differently, so there are optio
 
 Switch on *Model a heat pump + induction hob* to see what replacing the gas combi and gas hob would do.
 
+* **Gas inputs.** Pick your gas kWh sensor (history), a gas *unit rate* sensor and a *standing charge* sensor
+  (e.g. the Octopus gas Current Rate / Current Standing Charge sensors) under *Heat pump -> Gas & temperature data*;
+  the fixed numbers in *Gas replaced & costs* are only fallbacks when those sensors are missing or unavailable.
 * **Gas history -> heat demand.** Daily gas is fitted against outdoor temperature (`gas = base + k x degree-days`).
   The `base` is hot water + cooking, `k` is heating. Boiler efficiencies (default 85 % heating, 72 % hot water -
   combis lose a lot on short draws) turn gas kWh into the useful heat you actually needed. With no history it
@@ -99,7 +102,7 @@ Octopus/forecast/history lookups are cached and shared. Per-scenario tabs show o
 | Intelligent dispatching | Octopus `dispatching` binary sensor; planned slots are priced at the cheap rate |
 | Power Up / Down entity | any binary sensor / event / calendar that is `on` or lists windows (or use the `add_event` service) |
 | Solar forecast | just pick the **Forecast.Solar device** (or leave it blank - it is used automatically if it's the only one). Its sensors and array size are found for you; the twin scales that array to the one you're modelling |
-| Home consumption statistic | long-term statistic id of whole-home import kWh (Developer tools -> Statistics) |
+| Home electricity consumption | your whole-home kWh **sensor** (e.g. Octopus *Current Total Consumption*). Its recorded history teaches the twin your pattern |
 
 Without history it uses a typical-UK load shape; with >=14 days it learns weekday/weekend profiles;
 with >=330 days it replays your actual year.
