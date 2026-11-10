@@ -18,15 +18,23 @@ def pv_series(unit: list[float], hw: Hardware) -> list[float]:
     return [min(u * k, cap) for u in unit]
 
 
-def settle(hw: Hardware, soc: float, r_req: float, ev_on: bool, cap_d: float) -> tuple[float, float]:
-    """Apply a requested AC battery power within physical limits. Returns (new_soc, r_actual)."""
+def settle(hw: Hardware, soc: float, r_req: float, ev_on: bool, cap_d: float,
+           dt: float = DT, step: float | None = None) -> tuple[float, float]:
+    """Apply a requested AC battery power within physical limits. Returns (new_soc, r_actual).
+
+    `dt` is the window the power limits are checked over (the planner uses a whole half-hour slot);
+    `step` is how much time actually elapses and is what the state of charge advances by. They are the
+    same in the planner/annual runs, but the live twin ticks every minute inside a half-hour slot, so it
+    must advance SoC by the real elapsed time (`step`), not by a whole slot.
+    """
+    step = dt if step is None else step
     eta = hw.eta
     if r_req > _EPS:
-        r = max(0.0, min(r_req, hw.charge_kw, (hw.emax - soc) / (eta * DT)))
-        return soc + r * eta * DT, r
+        r = max(0.0, min(r_req, hw.charge_kw, (hw.emax - soc) / (eta * dt)))
+        return soc + r * eta * step, r
     if r_req < -_EPS and not ev_on:
-        r = -max(0.0, min(-r_req, cap_d, max(0.0, soc - hw.emin) * eta / DT))
-        return soc + r * DT / eta, r
+        r = -max(0.0, min(-r_req, cap_d, max(0.0, soc - hw.emin) * eta / dt))
+        return soc + r * step / eta, r
     return soc, 0.0
 
 

@@ -393,10 +393,12 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         r_req = follow(r_plan, sl, idx, house, ev, pv, sl.exp_house_kw[idx], pv_plan[idx])
         dt_s = (now - self.last_tick).total_seconds() if self.last_tick else 0.0
         self.last_tick = now
-        self._track_vehicles(now, dt_s / 3600.0 if 0 < dt_s <= MAX_GAP_S else 0.0)
+        h = dt_s / 3600.0 if 0 < dt_s <= MAX_GAP_S else 0.0       # real elapsed hours since the last tick
+        self._track_vehicles(now, h)
         soc_before = self.soc
+        # advance the virtual battery by the time that really passed (NOT a whole half-hour slot)
         self.soc, r = settle(hw, self.soc, r_req if hw.battery_kwh > 0 else 0.0, ev >= EV_ON_KW,
-                             hw.discharge_cap(pv))
+                             hw.discharge_cap(pv), dt=h or SLOT_H, step=h)
         grid = house + ev - pv + r
         imp_p, exp_p, bonus = sl.import_p[idx], sl.export_p[idx], sl.bonus_p[idx]
         cost_p, exp_kw = _slot_cost(hw, grid, r, imp_p, exp_p, bonus)

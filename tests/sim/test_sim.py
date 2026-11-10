@@ -160,3 +160,22 @@ def test_cheap_window_charging_is_a_straight_line():
     # levelling must not change what it costs
     res = simulate(sl, hw, Strategy(name="optimised"), chunk_tod_min=CHUNK)
     assert res.saving_gbp > 0
+
+
+def test_settle_advances_soc_by_elapsed_time_not_a_whole_slot():
+    """Regression: the live twin ticks every minute; SoC must move by power x real time."""
+    from custom_components.energy_twin.sim.engine import settle
+    hw = replace(HW, battery_kwh=13.5, battery_max_kw=10.0, inverter_kw=10.0)
+    minute = 1 / 60
+    soc, r = settle(hw, hw.emin, 99.0, False, 10.0, dt=minute, step=minute)
+    assert r == pytest.approx(10.0)
+    assert soc - hw.emin == pytest.approx(10.0 * hw.eta * minute)             # ~0.158 kWh, not ~4.7
+    # 90 one-minute ticks at 10 kW is 1.5 h of charging - cannot fill 12 kWh in a quarter of an hour
+    soc = hw.emin
+    for _ in range(15):
+        soc, _r = settle(hw, soc, 99.0, False, 10.0, dt=minute, step=minute)
+    assert soc - hw.emin == pytest.approx(10.0 * hw.eta * 0.25)
+    assert soc < hw.emax * 0.4
+    # a full-slot call (planner / annual) is unchanged
+    soc2, _ = settle(hw, hw.emin, 99.0, False, 10.0)
+    assert soc2 - hw.emin == pytest.approx(10.0 * hw.eta * 0.5)

@@ -289,3 +289,26 @@ async def test_dashboard_vehicle_card_renders(hass: HomeAssistant):
                 if c.get("title") == "Vehicles (what the twin understood)")
     out = Template(card["content"], hass).async_render()
     assert "**Leaf**" in out and "True (Connected: waiting for car demand)" in out
+
+
+async def test_live_twin_soc_moves_at_real_speed(hass: HomeAssistant):
+    """Regression: a one-minute tick used to move the battery by a whole half-hour of power."""
+    now = dt_util.utcnow()
+    entry = await _setup(hass, battery_max_kw=10.0, inverter_kw=10.0, power_up_import_p=0.0)
+    c = entry.runtime_data
+    await hass.services.async_call(DOMAIN, "add_event", {
+        "kind": "power_up", "start": (now - timedelta(hours=1)).isoformat(),
+        "end": (now + timedelta(hours=3)).isoformat()}, blocking=True)     # forces max-rate grid charging
+    await hass.async_block_till_done()
+    hw = c.hardware()
+    idx = c._plan_index(dt_util.utcnow())
+    assert idx is not None and c.plan.slots.event[idx] == "power_up"
+    c.soc = hw.emin
+    t = dt_util.utcnow()
+    c.last_tick = t - timedelta(seconds=60)
+    c._step(t, hw, idx)
+    gained = c.soc - hw.emin
+    assert 0 < gained <= hw.charge_kw * (1 / 60) + 1e-6, gained            # <= ~0.16 kWh, was ~4.7 kWh
+    for k in range(1, 15):                                                  # 15 min in total
+        c._step(t + timedelta(minutes=k), hw, idx)
+    assert c.soc < hw.emax * 0.5                                            # nowhere near full after 15 min
