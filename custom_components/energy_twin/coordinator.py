@@ -22,7 +22,7 @@ from .sim import ev as evm, heat as heatm, load, pipeline
 from .sim.engine import _slot_cost, charge_headroom, follow, plan_horizon, pv_series, settle
 from .sim.finance import Costs, FinanceTerms
 from .sim.models import EV_ON_KW, SLOT_H, GridEvent, Hardware, Slots, Strategy, TariffConfig
-from .sim.solar import synth_pv_unit
+from .sim.solar import shape_to_totals, synth_pv_unit
 from .sim.tariff import build_prices, floor_half_hour, make_starts, tod_minutes
 
 _LOGGER = logging.getLogger(__name__)
@@ -296,9 +296,17 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         evs += ha_data.parse_events(self._state(c.get(CONF_POWER_DOWN_ENTITY)), "power_down", now)
         return evs
 
+    def forecast_entry_id(self) -> str | None:
+        return ha_data.resolve_forecast_entry(self.hass, self.cfg)
+
+    def forecast_ref_kwp(self) -> float:
+        """Array size the forecast describes: your override, else read from the forecast device, else 1 kWp."""
+        c = self.cfg
+        return float(c.get(CONF_FORECAST_REF_KWP) or ha_data.forecast_array_kwp(self.hass, self.forecast_entry_id()) or 1.0)
+
     def _scale_pv(self, kw_ref: float) -> float:
         """kW from a forecast built for the reference array -> kW per kWp."""
-        return kw_ref / max(self.cfg[CONF_FORECAST_REF_KWP], 0.01)
+        return kw_ref / max(self.forecast_ref_kwp(), 0.01)
 
     # ------------------------------------------------------------------ planning
     async def _build_plan(self, now: datetime) -> Plan:
@@ -330,20 +338,34 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         if live_exp is not None and not ev_flag[0]:
             exp[0] = live_exp
 
-        fe = c.get(CONF_FORECAST_ENTRY)
+        fe = self.forecast_entry_id()
         fc = await ha_data.cached(self.hass, ("fc", fe), 240, lambda: ha_data.forecast_pv_kw(self.hass, fe))
         lat, lon = self.hass.config.latitude, self.hass.config.longitude
         _, synth = synth_pv_unit(starts, lat, lon, hw.pv_annual_yield)
-        pv_unit, from_fc = [], 0
-        for i, s in enumerate(starts):
-            if s in fc:
-                pv_unit.append(self._scale_pv(fc[s]))
-                from_fc += 1
-            else:
-                pv_unit.append(synth[i])
-        live_pv = ha_data.power_kw(self._state(c.get(CONF_PV_NOW_ENTITY)))
+        ents = self.forecast_entities()
+        ref = max(self.forecast_ref_kwp(), 0.01)
+        scale = c[CONF_FC_SCALE] / 100.0
+        st_ = self._state
+        kwh_rem = ha_data.energy_kwh(st_(ents.get("energy_production_today_remaining")))
+        kwh_tom = ha_data.energy_kwh(st_(ents.get("energy_production_tomorrow")))
+        pk_today = ha_data.timestamp_state(st_(ents.get("power_highest_peak_time_today")))
+        pk_tom = ha_data.timestamp_state(st_(ents.get("power_highest_peak_time_tomorrow")))
+        from_fc, source = 0, "seasonal curve (no forecast configured)"
+        if fc:
+            # the integration's own hourly forecast, period-end keyed (see ha_data.wh_period_to_kw)
+            pv_unit = [fc[s] / ref * scale if s in fc else synth[i] for i, s in enumerate(starts)]
+            from_fc, source = sum(1 for s in starts if s in fc), "forecast integration (hourly)"
+        elif kwh_rem is not None or kwh_tom is not None:
+            # no hourly feed: size and align the seasonal curve to the forecast's own totals and peak time
+            shaped = shape_to_totals(starts, self.tz, [u * ref for u in synth], now, kwh_rem, kwh_tom, pk_today, pk_tom)
+            pv_unit = [shaped[i] / ref * scale for i in range(len(starts))]
+            from_fc, source = len(starts), "forecast sensors (daily totals + peak time)"
+        else:
+            pv_unit = list(synth)
+        live_pv = ha_data.power_kw(self._state(c.get(CONF_PV_NOW_ENTITY) or ents.get("power_production_now")))
         if live_pv is not None:
-            pv_unit[0] = self._scale_pv(live_pv)
+            pv_unit[0] = self._scale_pv(live_pv) * scale
+        self._fc_diag = self._forecast_check(starts, pv_unit, ref, scale, source, ents, kwh_rem, kwh_tom, now)
 
         disp_slots = {floor_half_hour(a) + timedelta(minutes=30 * k)
                       for a, b in dispatches for k in range(max(1, int((b - a).total_seconds() // 1800)))}
@@ -381,6 +403,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "horizon_slots": len(starts), "live_price_entity": live_imp is not None,
             "live_pv_entity": live_pv is not None,
             "vehicles": self.ev_info,
+            **self._fc_diag,
             "heat_pump": ({"temps_from": self._temps_source, "gas_model": self.gas_model.source,
                            "tank_kwh": round(self.tank_kwh or 0.0, 1)} if hp.enabled else "off"),
             "fuse_limit_kw": round(hw.import_limit_kw, 1),
@@ -388,6 +411,40 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         return Plan(sl, res, now, hw_soc)
 
     _temps_source = "synthetic"
+    _fc_diag: dict = {}
+
+    def forecast_entities(self) -> dict[str, str]:
+        """The forecast device's own sensors, found automatically from its config entry."""
+        return ha_data.forecast_entities(self.hass, self.forecast_entry_id())
+
+    def _forecast_check(self, starts, pv_unit, ref, scale, source, ents, kwh_rem, kwh_tom, now) -> dict:
+        """What the planner will believe, next to the forecast sensors' own numbers (they should agree)."""
+        loc = [s.astimezone(self.tz).date() for s in starts]
+        today = now.astimezone(self.tz).date()
+        mine = lambda day: round(sum(pv_unit[i] * ref / scale * 0.5 for i in range(len(starts)) if loc[i] == day), 1)  # noqa: E731
+        fe = self.forecast_entry_id()
+        entry = self.hass.config_entries.async_get_entry(fe) if fe else None
+        out: dict = {"forecast_device": entry.title if entry else "none found",
+                     "forecast_array_kwp": round(self.forecast_ref_kwp(), 2), "forecast_source": source, "forecast_confidence_pct": round(scale * 100),
+                     "forecast_entities_found": len(ents),
+                     "planner_solar_remaining_today_kwh": mine(today),
+                     "planner_solar_tomorrow_kwh": mine(today + timedelta(days=1))}
+        if kwh_rem is not None:
+            out["sensor_remaining_today_kwh"] = round(kwh_rem, 1)
+        if kwh_tom is not None:
+            out["sensor_tomorrow_kwh"] = round(kwh_tom, 1)
+            if kwh_tom > 0.5:
+                d = 100 * (out["planner_solar_tomorrow_kwh"] - kwh_tom) / kwh_tom
+                out["forecast_check_tomorrow"] = "OK" if abs(d) <= 10 else f"MISMATCH {d:+.0f}% vs sensor"
+        hour = ha_data.energy_kwh(self._state(ents.get("energy_current_hour")))
+        if hour is not None and hour > 0.05 and source.startswith("forecast integration"):
+            h0 = now.replace(minute=0, second=0, microsecond=0)
+            ours = sum(pv_unit[i] * ref / scale * 0.5 for i, s in enumerate(starts) if h0 <= s < h0 + timedelta(hours=1))
+            out["sensor_this_hour_kwh"] = round(hour, 2)
+            # only comparable when the whole hour is inside the horizon (it starts at the current half-hour)
+            if starts[0] <= h0:
+                out["forecast_check_hour"] = "OK" if abs(ours - hour) <= 0.15 * hour + 0.03 else f"MISMATCH ({ours:.2f} vs {hour:.2f} kWh)"
+        return out
 
     async def _heat_load(self, starts, tod, cheap, ev_flag, tariff, hp, now):
         c = self.cfg

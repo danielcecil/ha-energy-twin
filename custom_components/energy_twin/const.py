@@ -17,6 +17,8 @@ CONF_POWER_UP_ENTITY = "power_up_entity"
 CONF_POWER_DOWN_ENTITY = "power_down_entity"
 CONF_FORECAST_ENTRY = "forecast_entry"                # Forecast.Solar / Solcast / Open-Meteo entry
 CONF_FORECAST_REF_KWP = "forecast_ref_kwp"            # kWp that forecast integration is set up for
+CONF_FC_SCALE = "forecast_scale_pct"                  # confidence haircut/boost on forecast solar
+CONF_FORECAST_DEVICE = "forecast_device"              # pick the Forecast.Solar device; everything else is found
 CONF_CONSUMPTION_STAT = "consumption_stat"            # whole-home import statistic id
 CONF_EV_STATS = "ev_stats"                            # comma separated EV energy statistic ids
 CONF_HISTORY_DAYS = "history_days"
@@ -119,7 +121,7 @@ STRATEGIES = {"optimised": "Optimised (look-ahead planner)", "rules": "Simple ru
 
 DEFAULTS: dict = {
     CONF_HW_PRESET: "custom", CONF_TARIFF_PRESET: "intelligent_go",
-    CONF_FORECAST_REF_KWP: 1.0, CONF_HISTORY_DAYS: 365,
+    CONF_FC_SCALE: 100.0, CONF_HISTORY_DAYS: 365,
     CONF_CHEAP_START: "23:30:00", CONF_CHEAP_END: "05:30:00",
     CONF_CHEAP_P: 7.0, CONF_STANDARD_P: 27.0, CONF_EXPORT_P: 15.0,
     CONF_PU_IMPORT_P: 0.0, CONF_PD_EXPORT_P: 30.0, CONF_PD_BONUS_P: 0.0,

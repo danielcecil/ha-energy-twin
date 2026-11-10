@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 import pytest
 
@@ -374,3 +374,60 @@ async def test_heat_options_flow_steps(hass: HomeAssistant):
         r = await hass.config_entries.options.async_init(entry.entry_id)
         r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": step})
         assert r["type"] == "form" and r["step_id"] == step, step
+
+
+async def _forecast_solar_device(hass: HomeAssistant, wp: int = 5000):
+    """A Forecast.Solar config entry + device + its sensors, as the real integration registers them."""
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+    await hass.config.async_update(time_zone="Europe/London")
+    fs = MockConfigEntry(domain="forecast_solar", title="Forecast.Solar", options={"modules_power": wp})
+    fs.add_to_hass(hass)
+    dev = dr.async_get(hass).async_get_or_create(config_entry_id=fs.entry_id, identifiers={("forecast_solar", fs.entry_id)},
+                                                 name="Solar production forecast")
+    reg, ids = er.async_get(hass), {}
+    for key in ("energy_production_today_remaining", "energy_production_tomorrow", "power_highest_peak_time_tomorrow",
+                "power_production_now", "energy_current_hour"):
+        ids[key] = reg.async_get_or_create("sensor", "forecast_solar", f"{fs.entry_id}_{key}", config_entry=fs,
+                                           device_id=dev.id, suggested_object_id=f"fs_{key}").entity_id
+    tomorrow_local = dt_util.now().replace(hour=13, minute=45, second=0, microsecond=0) + timedelta(days=1)
+    hass.states.async_set(ids["energy_production_today_remaining"], "6.0", {"unit_of_measurement": "kWh"})
+    hass.states.async_set(ids["energy_production_tomorrow"], "24500", {"unit_of_measurement": "Wh"})   # Wh is converted
+    hass.states.async_set(ids["power_highest_peak_time_tomorrow"], tomorrow_local.isoformat())
+    hass.states.async_set(ids["power_production_now"], "1500", {"unit_of_measurement": "W"})
+    hass.states.async_set(ids["energy_current_hour"], "1500", {"unit_of_measurement": "Wh"})
+    return fs, dev, tomorrow_local
+
+
+async def _check_forecast_plan(hass, entry, tomorrow_local):
+    c = entry.runtime_data
+    d = c.diag
+    assert d["forecast_device"] == "Forecast.Solar" and d["forecast_array_kwp"] == 5.0      # array size read from the device
+    assert d["forecast_entities_found"] == 5
+    assert d["forecast_source"] == "forecast sensors (daily totals + peak time)"           # (no hourly feed in this test env)
+    assert d["sensor_tomorrow_kwh"] == 24.5
+    assert d["planner_solar_tomorrow_kwh"] == pytest.approx(24.5, rel=0.03)               # the plan agrees with the sensor
+    assert d["forecast_check_tomorrow"] == "OK"
+    sl = c.plan.slots
+    tz = dt_util.get_default_time_zone()
+    tom = [i for i, s in enumerate(sl.start) if s.astimezone(tz).date() == tomorrow_local.date()]
+    pk = max(tom, key=lambda i: sl.exp_pv_unit[i])
+    assert abs((sl.start[pk] - tomorrow_local.astimezone(timezone.utc)).total_seconds()) <= 1800   # peak where forecast says
+    # live power from the device's own sensor: 1.5 kW on a 5 kWp array -> 1.8 kW on the 6 kWp twin
+    assert d["live_pv_entity"] and float(hass.states.get("sensor.home_energy_twin_solar_power").state) == pytest.approx(1.8)
+
+
+async def test_forecast_device_is_all_you_pick(hass: HomeAssistant):
+    fs, dev, tomorrow_local = await _forecast_solar_device(hass)
+    entry = await _setup(hass, strategy="rules", forecast_device=dev.id, forecast_ref_kwp=None, pv_now_entity=None)
+    await _check_forecast_plan(hass, entry, tomorrow_local)
+    # confidence scale: trust it less -> less solar in the plan
+    c = entry.runtime_data
+    before = sum(c.plan.slots.exp_pv_unit)
+    await c.async_set_options({"forecast_scale_pct": 80.0}, annual=False)
+    assert sum(c.plan.slots.exp_pv_unit) < before * 0.9
+
+
+async def test_forecast_solar_is_auto_selected_when_there_is_only_one(hass: HomeAssistant):
+    fs, dev, tomorrow_local = await _forecast_solar_device(hass)
+    entry = await _setup(hass, strategy="rules", forecast_ref_kwp=None, pv_now_entity=None)      # nothing chosen at all
+    await _check_forecast_plan(hass, entry, tomorrow_local)

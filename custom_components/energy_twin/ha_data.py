@@ -135,13 +135,28 @@ def parse_events(state: State | None, kind: str, now: datetime) -> list[GridEven
     return out
 
 
+def wh_period_to_kw(items: list[tuple[datetime, float]]) -> dict[datetime, float]:
+    """Forecast.Solar `wh_period` -> {30-min UTC slot start: kW}.
+
+    Verified against the forecast_solar library: each value is keyed by the END of its period (its own
+    `energy_current_hour` sums keys in (hour start, hour end]). So the energy at key 09:00 is the 08:00-09:00
+    hour. Keys that fall inside an hour (e.g. a sunrise timestamp) belong to the hour they end in.
+    """
+    hours: dict[datetime, float] = {}
+    for t, wh in items:
+        hs = (t - timedelta(microseconds=1)).astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+        hours[hs] = hours.get(hs, 0.0) + float(wh)
+    out: dict[datetime, float] = {}
+    for hs, wh in hours.items():
+        out[hs] = out[hs + timedelta(minutes=30)] = wh / 1000.0          # Wh over one hour == average W
+    return out
+
+
 async def forecast_pv_kw(hass: HomeAssistant, entry_id: str | None) -> dict[datetime, float]:
     """Return {30-min UTC slot start: kW} for the configured forecast integration's array.
 
-    Works with any integration exposing HA's energy platform (Forecast.Solar, Solcast, Open-Meteo
-    Solar Forecast...). ASSUMPTION: each `wh_hours` value is the energy for the hour starting at
-    its key, which is how HA's Energy dashboard plots it. If the twin's solar looks an hour late
-    or early compared with the integration's own chart, flip `_HOUR_SHIFT`.
+    Works with any integration exposing HA's energy platform (Forecast.Solar, Solcast, Open-Meteo Solar
+    Forecast...). Timestamps are interpreted as Forecast.Solar's period-end keys - see wh_period_to_kw.
     """
     from homeassistant.loader import async_get_integration
 
@@ -157,19 +172,44 @@ async def forecast_pv_kw(hass: HomeAssistant, entry_id: str | None) -> dict[date
     except Exception as err:  # noqa: BLE001 - any integration quirk must not break the twin
         _LOGGER.warning("Solar forecast from %s failed: %s", entry.domain, err)
         return {}
-    out: dict[datetime, float] = {}
-    for ts, wh in ((data or {}).get("wh_hours") or {}).items():
-        t = _dt(ts)
-        if t is None or wh is None:
+    items = [(t, wh) for ts, wh in ((data or {}).get("wh_hours") or {}).items()
+             if (t := _dt(ts)) is not None and wh is not None]
+    return wh_period_to_kw(items)
+
+
+_FC_KEYS = ("energy_production_today", "energy_production_today_remaining", "energy_production_tomorrow",
+            "power_highest_peak_time_today", "power_highest_peak_time_tomorrow", "power_production_now",
+            "energy_current_hour", "energy_next_hour")
+
+
+def forecast_entities(hass: HomeAssistant, entry_id: str | None) -> dict[str, str]:
+    """Find the Forecast.Solar sensors that belong to a config entry, so users needn't pick each one."""
+    from homeassistant.helpers import entity_registry as er
+
+    if not entry_id:
+        return {}
+    reg = er.async_get(hass)
+    out: dict[str, str] = {}
+    for ent in er.async_entries_for_config_entry(reg, entry_id):
+        if ent.domain != "sensor":
             continue
-        t = t + _HOUR_SHIFT
-        kw = float(wh) / 1000.0                                   # Wh over one hour == average W -> kW
-        out[floor_half_hour(t)] = kw
-        out[floor_half_hour(t) + timedelta(minutes=30)] = kw
+        for key in _FC_KEYS:
+            if ent.translation_key == key or (ent.unique_id or "").endswith("_" + key):
+                out.setdefault(key, ent.entity_id)
     return out
 
 
-_HOUR_SHIFT = timedelta(0)
+def energy_kwh(state: State | None) -> float | None:
+    """Read an energy sensor in Wh or kWh, return kWh."""
+    v = to_float(state)
+    if v is None:
+        return None
+    unit = (state.attributes.get("unit_of_measurement") or "").lower()
+    return v / 1000.0 if unit == "wh" else v
+
+
+def timestamp_state(state: State | None) -> datetime | None:
+    return _dt(state.state) if state is not None and state.state not in ("unknown", "unavailable") else None
 
 
 async def history_hourly(hass: HomeAssistant, stat_ids: list[str], days: int,
@@ -237,3 +277,36 @@ async def forecast_temps(hass: HomeAssistant, weather_entity: str | None) -> dic
         out[floor_half_hour(t)] = c
         out[floor_half_hour(t) + timedelta(minutes=30)] = c
     return out
+
+
+_FORECAST_DOMAINS = ("forecast_solar", "solcast_solar", "open_meteo_solar_forecast")
+
+
+def resolve_forecast_entry(hass: HomeAssistant, cfg: dict) -> str | None:
+    """Which solar-forecast config entry to use: the chosen device, a legacy entry id, or the only one installed."""
+    from homeassistant.helpers import device_registry as dr
+
+    dev_id = cfg.get("forecast_device")
+    if dev_id:
+        dev = dr.async_get(hass).async_get(dev_id)
+        if dev:
+            for eid in dev.config_entries:
+                e = hass.config_entries.async_get_entry(eid)
+                if e and e.domain in _FORECAST_DOMAINS:
+                    return eid
+    if cfg.get("forecast_entry"):
+        return cfg["forecast_entry"]
+    for dom in _FORECAST_DOMAINS:                                  # nothing chosen: use it if there is exactly one
+        entries = hass.config_entries.async_entries(dom)
+        if len(entries) == 1:
+            return entries[0].entry_id
+    return None
+
+
+def forecast_array_kwp(hass: HomeAssistant, entry_id: str | None) -> float | None:
+    """The array size the forecast integration was set up with (Forecast.Solar stores it in Wp)."""
+    entry = hass.config_entries.async_get_entry(entry_id) if entry_id else None
+    if entry is None or entry.domain != "forecast_solar":
+        return None
+    wp = entry.options.get("modules_power")
+    return float(wp) / 1000.0 if wp else None

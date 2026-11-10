@@ -61,3 +61,45 @@ def synth_pv_unit(starts: list[datetime], lat: float, lon: float, annual_yield: 
             expected[i] = base
             actual[i] = base * wf[d]
     return actual, expected
+
+
+def shape_to_totals(starts: list[datetime], tz, shape_kw: list[float], now: datetime,
+                    today_remaining_kwh: float | None, tomorrow_kwh: float | None,
+                    peak_today: datetime | None = None, peak_tomorrow: datetime | None = None) -> list[float]:
+    """Re-shape a generic daily solar curve so it agrees with a forecast's own numbers.
+
+    Used when the forecast integration's hourly feed isn't available but its sensors are: the energy still to
+    come today and tomorrow's total (kWh) set the size, and the 'highest peak time' sensors slide the curve so
+    its peak lands where the forecast says it will (cloud and panel orientation move the peak off solar noon).
+    Days beyond tomorrow are left as given.
+    """
+    from datetime import timedelta
+    out = list(shape_kw)
+    today = now.astimezone(tz).date()
+    by_day: dict = {}
+    for i, st in enumerate(starts):
+        by_day.setdefault(st.astimezone(tz).date(), []).append(i)
+    first_slot = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
+    for day, kwh, peak, partial in ((today, today_remaining_kwh, peak_today, True),
+                                    (today + timedelta(days=1), tomorrow_kwh, peak_tomorrow, False)):
+        idx = by_day.get(day)
+        if not idx or kwh is None:
+            continue
+        vals = [shape_kw[i] for i in idx]
+        if partial:
+            vals = [v if starts[i] >= first_slot else 0.0 for v, i in zip(vals, idx)]
+        if peak is not None and max(vals) > 0 and (not partial or peak >= now):
+            want = min(idx, key=lambda i: abs((starts[i] - peak).total_seconds()))
+            have = idx[vals.index(max(vals))]
+            shift = max(-8, min(8, want - have))                       # at most 4 h, in half-hour slots
+            if shift:
+                moved = [0.0] * len(vals)
+                for k, v in enumerate(vals):
+                    if 0 <= k + shift < len(vals):
+                        moved[k + shift] = v
+                vals = moved
+        total = sum(vals) * 0.5
+        scale = kwh / total if total > 1e-9 else 0.0
+        for v, i in zip(vals, idx):
+            out[i] = v * scale
+    return out

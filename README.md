@@ -99,7 +99,7 @@ Octopus/forecast/history lookups are cached and shared. Per-scenario tabs show o
 | Import / export rates | Octopus Energy integration rate entities (current + next day) - the `rates` attribute |
 | Intelligent dispatching | Octopus `dispatching` binary sensor; planned slots are priced at the cheap rate |
 | Power Up / Down entity | any binary sensor / event / calendar that is `on` or lists windows (or use the `add_event` service) |
-| Solar forecast | the Forecast.Solar (or Solcast / Open-Meteo) config entry, and the kWp it is configured for - the twin scales it to your modelled array |
+| Solar forecast | just pick the **Forecast.Solar device** (or leave it blank - it is used automatically if it's the only one). Its sensors and array size are found for you; the twin scales that array to the one you're modelling |
 | Home consumption statistic | long-term statistic id of whole-home import kWh (Developer tools -> Statistics) |
 
 Without history it uses a typical-UK load shape; with >=14 days it learns weekday/weekend profiles;
@@ -133,17 +133,12 @@ scenario; events always apply to all.
   tell me the entity's attributes and I'll adapt the parser.
 * **Power Up / Power Down terms are placeholders** (Power Up import 0 p, Power Down export 30 p).
   Set the real rates in *Tariff*, or per event via `add_event`.
-* **Forecast.Solar timing:** I assume each hourly `wh_hours` value covers the hour starting at its
-  key. If the twin's solar looks an hour off versus the integration's chart, change `_HOUR_SHIFT`
-  in `ha_data.py`.
-* **Annual figures are modelled:** solar is a seasonal synthetic curve scaled to your
-  "kWh per kWp" (get it from PVGIS/your installer); weather is random-but-seeded. Treat savings as a
-  planning estimate, not a quote. The optimiser plans on expected values and executes against
-  actuals, re-planning at set times, so it isn't allowed perfect foresight.
-* Hybrid-inverter simplification: PV clipped at the inverter rating, battery power limited to the
-  smaller of battery and inverter ratings; DC-coupled clipping recapture isn't modelled.
-* Gas is not modelled (solar/battery don't change it). Heat-pump scenarios are an obvious next step.
-* Payback/NPV default costs are placeholders; enter your quotes.
+* **Solar forecast:** Forecast.Solar keys each hourly value by the *end* of its period (checked against the
+  library source), and the twin maps it that way. It uses the integration's hourly forecast; if that isn't available
+  it re-shapes a seasonal curve to the device's own sensors (energy remaining today, tomorrow's total, peak
+  times). Diagnostics shows the source used and compares the plan with the device's sensors. The forecast has no
+  uncertainty band, so *Forecast confidence %* (e.g. 85) lets you plan more cautiously. The annual what-if
+  can't use a forecast (it only covers two days) and uses the seasonal curve.
 
 ## Develop
 

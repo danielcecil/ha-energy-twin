@@ -49,8 +49,9 @@ STEPS: dict[str, list[tuple[str, Any, bool]]] = {
         (CONF_POWER_DOWN_ENTITY, _ent(), False),
     ],
     "sources_solar_history": [
-        (CONF_FORECAST_ENTRY, sel.ConfigEntrySelector(), False),
+        (CONF_FORECAST_DEVICE, sel.DeviceSelector(sel.DeviceSelectorConfig(integration="forecast_solar")), False),
         (CONF_FORECAST_REF_KWP, _num(0.1, 100, 0.1, "kWp"), False),
+        (CONF_FC_SCALE, _num(40, 150, 1, "%"), True),
         (CONF_CONSUMPTION_STAT, _TEXT, False),
         (CONF_EV_STATS, _TEXT, False),
         (CONF_HISTORY_DAYS, _num(14, 730, 1, "days"), False),

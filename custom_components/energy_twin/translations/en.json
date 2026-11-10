@@ -71,15 +71,17 @@
       "sources_solar_history": {
         "title": "Solar forecast & history",
         "data": {
-          "forecast_entry": "Solar forecast integration",
-          "forecast_ref_kwp": "Forecast array size (kWp)",
+          "forecast_device": "Solar forecast device",
+          "forecast_ref_kwp": "Forecast array size override (kWp)",
+          "forecast_scale_pct": "Forecast confidence (%)",
           "consumption_stat": "Home consumption statistic",
           "ev_stats": "EV energy statistics",
           "history_days": "Days of history to learn from"
         },
         "data_description": {
-          "forecast_entry": "Forecast.Solar, Solcast or Open-Meteo Solar Forecast config entry.",
-          "forecast_ref_kwp": "The array size that forecast integration is configured for. The twin scales it to your modelled array.",
+          "forecast_device": "Pick your Forecast.Solar device - that is all. Its sensors and array size are found automatically. Leave blank to auto-use it if it is the only one installed.",
+          "forecast_ref_kwp": "Optional. Normally read from the Forecast.Solar device. The twin scales that array to the one you are modelling.",
+          "forecast_scale_pct": "100 = trust the forecast. Lower (e.g. 85) makes the planner assume less sun than forecast, so it charges more overnight.",
           "consumption_stat": "Long-term statistic id for whole-home import kWh (an energy sensor, or e.g. octopus_energy:electricity_<serial>_<mpan>_import_consumption - see Developer tools > Statistics).",
           "ev_stats": "Comma-separated statistic ids for your chargers' kWh. If blank, off-peak demand above the night base load is assumed to be the cars."
         }
@@ -184,15 +186,17 @@
       "sources_solar_history": {
         "title": "Solar forecast & history",
         "data": {
-          "forecast_entry": "Solar forecast integration",
-          "forecast_ref_kwp": "Forecast array size (kWp)",
+          "forecast_device": "Solar forecast device",
+          "forecast_ref_kwp": "Forecast array size override (kWp)",
+          "forecast_scale_pct": "Forecast confidence (%)",
           "consumption_stat": "Home consumption statistic",
           "ev_stats": "EV energy statistics",
           "history_days": "Days of history to learn from"
         },
         "data_description": {
-          "forecast_entry": "Forecast.Solar, Solcast or Open-Meteo Solar Forecast config entry.",
-          "forecast_ref_kwp": "The array size that forecast integration is configured for. The twin scales it to your modelled array.",
+          "forecast_device": "Pick your Forecast.Solar device - that is all. Its sensors and array size are found automatically. Leave blank to auto-use it if it is the only one installed.",
+          "forecast_ref_kwp": "Optional. Normally read from the Forecast.Solar device. The twin scales that array to the one you are modelling.",
+          "forecast_scale_pct": "100 = trust the forecast. Lower (e.g. 85) makes the planner assume less sun than forecast, so it charges more overnight.",
           "consumption_stat": "Long-term statistic id for whole-home import kWh (an energy sensor, or e.g. octopus_energy:electricity_<serial>_<mpan>_import_consumption - see Developer tools > Statistics).",
           "ev_stats": "Comma-separated statistic ids for your chargers' kWh. If blank, off-peak demand above the night base load is assumed to be the cars."
         }
