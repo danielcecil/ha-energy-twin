@@ -22,6 +22,7 @@ class Hardware:
     reserve_pct: float = 10.0         # never discharge below this
     export_limit_kw: float = 3.68     # G98 single-phase default; G99 may allow more
     cycle_cost_p: float = 0.0         # optional wear cost per kWh discharged
+    import_limit_kw: float = 0.0      # main-fuse limit on grid import (0 = unlimited)
 
     @property
     def eta(self) -> float:
@@ -105,6 +106,10 @@ class Slots:
     exp_ev_kw: list[float]
     exp_pv_unit: list[float]
     month: list[str] = field(default_factory=list)   # "YYYY-MM" for reporting
+    # extra electrified load (heat pump + induction hob). It is NOT in the baseline bill unless asked.
+    new_kw: list[float] = field(default_factory=list)
+    exp_new_kw: list[float] = field(default_factory=list)
+    heat: dict | None = None                          # annual heat-pump summary (see sim/heat.py)
 
     @property
     def n(self) -> int:
@@ -137,6 +142,7 @@ class Result:
     grid_charge_kwh: float = 0.0
     battery_discharge_kwh: float = 0.0
     battery_export_kwh: float = 0.0
+    peak_import_kw: float = 0.0
 
     @property
     def saving_gbp(self) -> float:

@@ -51,6 +51,33 @@ the plan. Learning only happens around real sessions (energy delivered, plug-in 
 their states differently, so there are optional "plugged-in states" / "at-home states" overrides, and the
 Diagnostics tab shows, per car, what was understood and from which raw state.
 
+## Heat pump, induction hob and the main fuse
+
+Switch on *Model a heat pump + induction hob* to see what replacing the gas combi and gas hob would do.
+
+* **Gas history -> heat demand.** Daily gas is fitted against outdoor temperature (`gas = base + k x degree-days`).
+  The `base` is hot water + cooking, `k` is heating. Boiler efficiencies (default 85 % heating, 72 % hot water -
+  combis lose a lot on short draws) turn gas kWh into the useful heat you actually needed. With no history it
+  uses a typical 11.5 MWh/yr home.
+* **Heat -> electricity.** Divide by a COP that depends on outdoor and flow temperature (Carnot-fraction model),
+  so cold days cost more and tank water (50-60 C) costs more than radiator water (45 C).
+* **Tank.** 270 L by default; it charges from 04:00 in the cheap window, tops up during Power Up and smart-charge
+  slots, and falls back to the grid at any price if it nearly runs dry. A weekly 60 C boost is included.
+  If the heat pump cannot keep up (too small for a cold day) the shortfall is resistive heating at COP 1.
+* **Induction.** Gas hob kWh x 0.5 -> electric kWh, shaped to meal times.
+* **Money.** Net heat pump saving = gas avoided (+ standing charge if you disconnect gas) minus the extra
+  electricity priced slot by slot. Solar/battery savings are then measured *with* the heat pump's load in the house
+  (it makes them worth more). Outlay includes the heat pump, tank and hob less any grant.
+* **Main fuse.** Set the cut-out rating (default 100 A, single phase, 230 V, 90 % usable). The planner will not
+  charge the battery past it, so a 7 kW car + heat pump + battery charge cannot stack beyond your supply.
+  *Peak grid import* and *Main fuse usage* sensors show how close the plan gets.
+
+**How accurate?** Hot water and cooking are fairly well pinned down by your gas history (roughly +/-15 %).
+Annual space-heating electricity is more like +/-25-30 % because COP, flow temperature, emitters and sizing all
+matter, and the model assumes steady all-day heating (it does not model your house's thermal mass, so it does
+not pre-heat the building in the cheap window). Treat the numbers as a range and try COP-affecting settings
+(flow temperature, Carnot fraction) to see the spread. Prices, costs and the grant are placeholders - check yours.
+
 ## Compare several setups
 
 Each config entry is a **scenario**: its own kit, strategy, costs, device and virtual battery, all

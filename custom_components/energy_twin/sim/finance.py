@@ -11,6 +11,7 @@ class Costs:
     battery_fixed: float = 1500.0
     battery_per_kwh: float = 350.0
     other: float = 0.0
+    hp: float = 0.0                  # net heat pump + induction cost (after any grant)
 
     def pv(self, kwp: float) -> float:
         return self.pv_fixed + self.pv_per_kwp * kwp if kwp > 0 else 0.0
@@ -19,7 +20,7 @@ class Costs:
         return self.battery_fixed + self.battery_per_kwh * kwh if kwh > 0 else 0.0
 
     def total(self, kwp: float, kwh: float) -> float:
-        return self.pv(kwp) + self.battery(kwh) + (self.other if (kwp > 0 or kwh > 0) else 0.0)
+        return self.pv(kwp) + self.battery(kwh) + (self.other if (kwp > 0 or kwh > 0) else 0.0) + self.hp
 
 
 @dataclass(frozen=True)
@@ -41,9 +42,10 @@ def monthly_payment(principal: float, apr_pct: float, months: int) -> float:
     return principal / months if r == 0 else principal * r / (1 - (1 + r) ** -months)
 
 
-def evaluate_finance(capex: float, pv_saving: float, battery_saving: float, t: FinanceTerms) -> dict:
+def evaluate_finance(capex: float, pv_saving: float, battery_saving: float, t: FinanceTerms,
+                     hp_saving: float = 0.0) -> dict:
     """pv_saving / battery_saving are year-1 savings in GBP. Returns headline numbers."""
-    year1 = pv_saving + battery_saving
+    year1 = pv_saving + battery_saving + hp_saving
     financed = max(0.0, capex - t.deposit) if t.term_months > 0 else 0.0
     upfront = capex - financed
     pay = monthly_payment(financed, t.apr_pct, t.term_months)
@@ -54,7 +56,7 @@ def evaluate_finance(capex: float, pv_saving: float, battery_saving: float, t: F
     npv = -upfront
     series = []
     for y in range(1, t.horizon_years + 1):
-        sav = (pv_saving * (1 - t.pv_degradation_pct / 100) ** (y - 1)
+        sav = ((pv_saving + hp_saving) * (1 - t.pv_degradation_pct / 100) ** (y - 1)
                + battery_saving * (1 - t.battery_degradation_pct / 100) ** (y - 1)) \
             * (1 + t.tariff_escalation_pct / 100) ** (y - 1)
         paid = pay * 12 if (y - 1) * 12 < t.term_months else 0.0

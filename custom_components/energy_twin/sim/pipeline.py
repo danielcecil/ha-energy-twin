@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from . import annual, ev as evm, load
+from . import annual, ev as evm, heat as heatm, load
 from .finance import Costs, FinanceTerms, evaluate_finance
 from .models import GridEvent, Hardware, Slots, Strategy, TariffConfig
 
@@ -60,7 +60,8 @@ def synthetic_events(start_day: date, days: int, tz: ZoneInfo, kind: str, per_mo
 
 def make_year(profile, hist_house, hist_ev, hist_days, last_hist, *, hw: Hardware, tariff: TariffConfig,
               tz: ZoneInfo, lat: float, lon: float, today: date, pd: tuple, pu: tuple,
-              vehicles: list | None = None, learns: dict | None = None) -> Slots:
+              vehicles: list | None = None, learns: dict | None = None,
+              heat: tuple | None = None) -> Slots:
     """pd / pu = (per_month, start_hour, hours) for assumed Power Down / Power Up events."""
     if hist_house is not None and hist_days >= FULL_YEAR_DAYS and last_hist:
         start = last_hist - timedelta(days=364)
@@ -78,18 +79,46 @@ def make_year(profile, hist_house, hist_ev, hist_days, last_hist, *, hw: Hardwar
         sl.exp_ev_kw = exp
         if not real_history:
             sl.ev_kw = act
+    if heat and heat[0].enabled:
+        hp, gm = heat
+        act_t, exp_t = heatm.synth_temps(sl.start, tz)
+        win = [tariff.in_cheap_window(t) for t in sl.tod_min]
+        opp = [sl.cheap[i] and (not win[i] or sl.event[i] == "power_up") for i in range(sl.n)]
+        loc = [x.astimezone(tz) for x in sl.start]
+        wd, dk = [d.weekday() for d in loc], [d.date() for d in loc]
+        a = heatm.simulate_heat(sl.tod_min, sl.cheap, opp, wd, dk, act_t, hp, gm)
+        e = heatm.simulate_heat(sl.tod_min, sl.cheap, opp, wd, dk, exp_t, hp, gm)
+        sl.new_kw, sl.exp_new_kw = a.new_kw, e.new_kw
+        sl.heat = heatm.summarise(a, sl.cheap, hp)
+        sl.heat["gas_model"] = {"source": gm.source, "base_kwh_day": round(gm.base_kwh_day, 2),
+                                "k_per_degday": round(gm.k_per_degday, 2), "days": gm.days, "r2": round(gm.r2, 2)}
     return sl
 
 
+def _hp_economics(sl: Slots, hp: "heatm.HeatParams", f: float) -> dict:
+    """Gas avoided vs the extra grid electricity (priced slot by slot, with no solar/battery)."""
+    grid = sum(sl.new_kw[i] * 0.5 * sl.import_p[i] for i in range(sl.n)) / 100.0 * f
+    gas = sl.heat["gas_kwh_displaced"] * hp.gas_unit_p / 100.0
+    standing = hp.gas_standing_p_day * 365 / 100.0 if hp.gas_disconnect else 0.0
+    return {"grid_cost_nokit": round(grid, 2), "gas_cost_avoided": round(gas, 2), "gas_standing_avoided": round(standing, 2),
+            "net_hp_saving": round(gas + standing - grid, 2)}
+
+
 def annual_report(sl: Slots, hw: Hardware, st: Strategy, tariff: TariffConfig, costs: Costs,
-                  terms: FinanceTerms, attribution: bool = True) -> dict:
-    a = annual.evaluate(sl, hw, st, tariff.cheap_start_min, attribution=attribution)
+                  terms: FinanceTerms, attribution: bool = True, heat_p: "heatm.HeatParams | None" = None) -> dict:
+    has_hp = bool(sl.heat) and heat_p is not None and heat_p.enabled
+    a = annual.evaluate(sl, hw, st, tariff.cheap_start_min, attribution=attribution, baseline_with_new=has_hp)
     f = 365.0 / a.days
     pv_sav, batt_sav = annual.split_savings(a)
+    econ = _hp_economics(sl, heat_p, f) if has_hp else None
+    hp_sav = econ["net_hp_saving"] if econ else 0.0
     capex = costs.total(hw.pv_kwp, hw.battery_kwh)
-    fin = evaluate_finance(capex, pv_sav, batt_sav, terms)
+    fin = evaluate_finance(capex, pv_sav, batt_sav, terms, hp_sav)
     return {
-        "saving_year1": round(a.saving_gbp * f, 2),
+        "saving_year1": round(a.saving_gbp * f + hp_sav, 2),
+        "hp_saving": round(hp_sav, 2),
+        "heat": ({**sl.heat, **econ} if econ else None),
+        "peak_import_kw": round(a.peak_import_kw, 2),
         "baseline_year1": round(a.baseline_gbp * f, 2),
         "scenario_year1": round(a.scenario_gbp * f, 2),
         "pv_saving": round(pv_sav, 2),
@@ -108,6 +137,10 @@ def annual_report(sl: Slots, hw: Hardware, st: Strategy, tariff: TariffConfig, c
 
 
 def run_sweep(sl: Slots, hw: Hardware, st: Strategy, tariff: TariffConfig, costs: Costs, terms: FinanceTerms,
-              batteries: list[float], arrays: list[float], inverters: list[float] | None) -> list[dict]:
+              batteries: list[float], arrays: list[float], inverters: list[float] | None,
+              heat_p: "heatm.HeatParams | None" = None) -> list[dict]:
+    has_hp = bool(sl.heat) and heat_p is not None and heat_p.enabled
+    hp_sav = _hp_economics(sl, heat_p, 1.0)["net_hp_saving"] if has_hp else 0.0
     return annual.sweep(lambda _y: sl, hw, st, tariff.cheap_start_min, costs, terms,
-                        batteries=batteries, arrays=arrays, inverters=inverters)
+                        batteries=batteries, arrays=arrays, inverters=inverters,
+                        baseline_with_new=has_hp, hp_saving=hp_sav)

@@ -34,7 +34,8 @@ def _gbp(p: float | None) -> float | None:
 def _saving(bucket: str):
     def fn(d: dict):
         b = d.get("acc", {}).get(bucket)
-        return _gbp(b["actual_p"] - b["twin_p"]) if b else None
+        # electricity saved by the kit, plus gas you would no longer burn (if the heat pump is on)
+        return _gbp(b["actual_p"] - b["twin_p"] + b.get("gas_p", 0.0)) if b else None
     return fn
 
 
@@ -71,7 +72,15 @@ def _annual_attrs(d: dict) -> dict:
     cum = fin.get("cumulative_by_year") or []
     sc = d.get("scenario") or {}
     led = {k: _saving(k)(d) for k in ("day", "month", "total")}
-    cmp = {"scenario": sc.get("name"), "battery_kwh": sc.get("battery_kwh"), "pv_kwp": sc.get("pv_kwp"),
+    hp = a.get("heat") or {}
+    cmp = {"hp_saving": a.get("hp_saving"), "gas_cost_avoided": hp.get("gas_cost_avoided"),
+           "gas_standing_avoided": hp.get("gas_standing_avoided"), "hp_grid_cost": hp.get("grid_cost_nokit"),
+           "hp_electricity_kwh": hp.get("hp_electricity_kwh"), "gas_kwh_displaced": hp.get("gas_kwh_displaced"),
+           "scop_space": hp.get("scop_space"), "scop_dhw": hp.get("scop_dhw"), "cheap_share_pct": hp.get("cheap_share_pct"),
+           "dhw_electricity_kwh": hp.get("dhw_electricity_kwh"), "space_electricity_kwh": hp.get("space_electricity_kwh"),
+           "backup_electricity_kwh": hp.get("backup_electricity_kwh"), "induction_kwh": hp.get("induction_kwh"),
+           "gas_model": hp.get("gas_model"), "peak_hp_kw": hp.get("peak_hp_kw"), "peak_import_kw_year": a.get("peak_import_kw"),
+           "scenario": sc.get("name"), "battery_kwh": sc.get("battery_kwh"), "pv_kwp": sc.get("pv_kwp"),
            "inverter_kw": sc.get("inverter_kw"), "capex": fin.get("capex"), "payback_years": fin.get("payback_years"),
            "monthly_net_cashflow": fin.get("monthly_net_cashflow"), "npv": fin.get("npv"),
            "net_5y": cum[4] if len(cum) > 4 else None, "net_10y": cum[9] if len(cum) > 9 else None,
@@ -134,6 +143,27 @@ SENSORS: tuple[TwinSensorDescription, ...] = (
                           native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, device_class=SensorDeviceClass.ENERGY,
                           value_fn=_g("ev", "tonight_kwh"),
                           attr_fn=lambda d: {"vehicles": (d.get("ev") or {}).get("vehicles", [])}),
+    # ---- heat pump / supply
+    TwinSensorDescription(key="hp_power", translation_key="hp_power", native_unit_of_measurement=UnitOfPower.KILO_WATT,
+                          device_class=SensorDeviceClass.POWER, state_class=SensorStateClass.MEASUREMENT,
+                          value_fn=lambda d: _r(d.get("live", {}).get("hp_kw")),
+                          attr_fn=lambda d: {"induction_kw": _r(d.get("live", {}).get("induction_kw")),
+                                             "cop_space": _r(d.get("live", {}).get("cop_space")),
+                                             "cop_dhw": _r(d.get("live", {}).get("cop_dhw")),
+                                             "tank_charging": d.get("live", {}).get("tank_charging")}),
+    TwinSensorDescription(key="hp_tank_temp", translation_key="hp_tank_temp", native_unit_of_measurement="°C",
+                          device_class=SensorDeviceClass.TEMPERATURE, state_class=SensorStateClass.MEASUREMENT,
+                          value_fn=lambda d: (d.get("hp") or {}).get("tank_temp_c"),
+                          attr_fn=lambda d: {"tank_kwh": (d.get("hp") or {}).get("tank_kwh"),
+                                             "tank_pct": (d.get("hp") or {}).get("tank_pct")}),
+    TwinSensorDescription(key="peak_import", translation_key="peak_import", native_unit_of_measurement=UnitOfPower.KILO_WATT,
+                          device_class=SensorDeviceClass.POWER, value_fn=_g("plan", "peak_import_kw"),
+                          attr_fn=lambda d: {"fuse_limit_kw": (d.get("supply") or {}).get("limit_kw")}),
+    TwinSensorDescription(key="fuse_usage", translation_key="fuse_usage", native_unit_of_measurement=PERCENTAGE,
+                          value_fn=_g("plan", "fuse_pct")),
+    TwinSensorDescription(key="annual_hp_saving", translation_key="annual_hp_saving", native_unit_of_measurement=GBP,
+                          device_class=SensorDeviceClass.MONETARY, value_fn=_g("annual", "hp_saving"),
+                          attr_fn=lambda d: dict((d.get("annual") or {}).get("heat") or {})),
     # ---- plan
     TwinSensorDescription(key="plan_target_soc", translation_key="plan_target_soc", native_unit_of_measurement=PERCENTAGE,
                           value_fn=_g("plan", "target_soc_pct"), attr_fn=_plan_series),

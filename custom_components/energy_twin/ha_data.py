@@ -172,8 +172,9 @@ async def forecast_pv_kw(hass: HomeAssistant, entry_id: str | None) -> dict[date
 _HOUR_SHIFT = timedelta(0)
 
 
-async def history_hourly(hass: HomeAssistant, stat_ids: list[str], days: int) -> dict[str, list[tuple[datetime, float]]]:
-    """Hourly kWh 'change' from long-term statistics, per statistic id."""
+async def history_hourly(hass: HomeAssistant, stat_ids: list[str], days: int,
+                         kind: str = "change") -> dict[str, list[tuple[datetime, float]]]:
+    """Hourly long-term statistics per statistic id: 'change' (kWh) for energy, 'mean' for e.g. temperature."""
     from homeassistant.components.recorder import get_instance
     from homeassistant.components.recorder.statistics import statistics_during_period
 
@@ -183,7 +184,7 @@ async def history_hourly(hass: HomeAssistant, stat_ids: list[str], days: int) ->
     start = end - timedelta(days=days)
     try:
         rows = await get_instance(hass).async_add_executor_job(
-            statistics_during_period, hass, start, end, set(stat_ids), "hour", None, {"change"}
+            statistics_during_period, hass, start, end, set(stat_ids), "hour", None, {kind}
         )
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning("Could not read statistics %s: %s", stat_ids, err)
@@ -194,8 +195,8 @@ async def history_hourly(hass: HomeAssistant, stat_ids: list[str], days: int) ->
         for r in lst:
             s = r["start"]
             s = datetime.fromtimestamp(s, UTC) if isinstance(s, (int, float)) else dt_util.as_utc(s)
-            if r.get("change") is not None:
-                series.append((s, float(r["change"])))
+            if r.get(kind) is not None:
+                series.append((s, float(r[kind])))
         out[sid] = series
     return out
 
@@ -213,3 +214,26 @@ async def cached(hass: HomeAssistant, key: tuple, ttl: float, factory):
             ent["v"] = await factory()
             ent["t"] = now
         return ent["v"]
+
+
+async def forecast_temps(hass: HomeAssistant, weather_entity: str | None) -> dict[datetime, float]:
+    """Hourly outdoor temperature (C) from a weather entity's forecast, keyed by 30-min UTC slot start."""
+    if not weather_entity:
+        return {}
+    try:
+        resp = await hass.services.async_call("weather", "get_forecasts", {"entity_id": weather_entity, "type": "hourly"},
+                                              blocking=True, return_response=True)
+    except Exception as err:  # noqa: BLE001 - not every weather entity supports hourly forecasts
+        _LOGGER.debug("No hourly forecast from %s: %s", weather_entity, err)
+        return {}
+    state = hass.states.get(weather_entity)
+    fahrenheit = bool(state and "f" in str(state.attributes.get("temperature_unit", "")).lower())
+    out: dict[datetime, float] = {}
+    for it in ((resp or {}).get(weather_entity) or {}).get("forecast") or []:
+        t, temp = _dt(it.get("datetime")), it.get("temperature")
+        if t is None or temp is None:
+            continue
+        c = (float(temp) - 32.0) * 5.0 / 9.0 if fahrenheit else float(temp)
+        out[floor_half_hour(t)] = c
+        out[floor_half_hour(t) + timedelta(minutes=30)] = c
+    return out

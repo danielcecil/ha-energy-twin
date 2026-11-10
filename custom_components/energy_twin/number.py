@@ -36,6 +36,10 @@ NUMBERS = (
     _d("standard_p", CONF_STANDARD_P, 0, 80, 0.1, "p/kWh"),
     _d("pv_cost_per_kwp", CONF_PV_COST_KWP, 0, 3000, 10, "£/kWp"),
     _d("battery_cost_per_kwh", CONF_BATT_COST_KWH, 0, 2000, 10, "£/kWh"),
+    _d("tank_litres", CONF_TANK_L, 100, 500, 10, "L"),
+    _d("main_fuse_a", CONF_FUSE_A, 20, 200, 5, "A"),
+    _d("gas_unit_p", CONF_GAS_P, 0, 30, 0.1, "p/kWh"),
+    _d("hp_capacity_kw", CONF_HP_CAP_KW, 2, 20, 0.5, "kW"),
     _d("power_down_per_month", CONF_PD_PER_MONTH, 0, 30, 1),
     _d("power_up_per_month", CONF_PU_PER_MONTH, 0, 30, 1),
 )

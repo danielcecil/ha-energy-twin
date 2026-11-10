@@ -197,6 +197,89 @@
           "ev_stats": "Comma-separated statistic ids for your chargers' kWh. If blank, off-peak demand above the night base load is assumed to be the cars."
         }
       },
+      "sources_heat": {
+        "title": "Heat pump data",
+        "description": "Gas history and outdoor temperature let the twin work out how much of your gas is heating and how much is hot water.",
+        "data": {
+          "gas_stat": "Gas consumption statistic",
+          "outdoor_temp_entity": "Outdoor temperature sensor",
+          "outdoor_temp_stat": "Outdoor temperature statistic",
+          "weather_entity": "Weather entity (hourly forecast)",
+          "tank_temp_entity": "Hot water tank temperature"
+        },
+        "data_description": {
+          "gas_stat": "Statistic id of your gas kWh (the Octopus gas consumption sensor). Used to split hot water from heating.",
+          "outdoor_temp_entity": "Used to fit gas use against weather, and to nudge the forecast.",
+          "outdoor_temp_stat": "Optional. Statistic id with temperature history. Blank = use the sensor above.",
+          "weather_entity": "Optional. Gives the planner the real forecast instead of a seasonal curve.",
+          "tank_temp_entity": "Optional. If you have a real tank sensor it overrides the model."
+        }
+      },
+      "supply": {
+        "title": "Supply & main fuse",
+        "description": "Limits how much the planner draws from the grid (cars + heat pump + battery charging).",
+        "data": {
+          "main_fuse_a": "Main cut-out fuse (A)",
+          "supply_phases": "Supply",
+          "supply_voltage": "Voltage (V)",
+          "fuse_usable_pct": "Usable share of the fuse (%)"
+        },
+        "data_description": {
+          "main_fuse_a": "Typically 100 A for a single-phase UK home; older homes can be 60-80 A.",
+          "fuse_usable_pct": "The planner keeps grid import below this share of the fuse rating."
+        }
+      },
+      "heat": {
+        "title": "Heat pump & tank",
+        "data": {
+          "hp_enabled": "Model a heat pump + induction hob",
+          "tank_litres": "Hot water tank (litres)",
+          "tank_setpoint_c": "Tank set point (°C)",
+          "tank_loss_kwh_day": "Tank standing loss (kWh/day)",
+          "legionella_c": "Weekly legionella boost (°C)",
+          "dhw_start": "Hot water charge starts at",
+          "hp_elec_max_kw": "Heat pump electrical power (kW)",
+          "hp_capacity_kw": "Heat pump output at 7°C (kW)",
+          "flow_temp_c": "Space-heating flow temperature (°C)",
+          "carnot_frac": "Efficiency vs ideal (Carnot fraction)",
+          "base_temp_c": "Heating base temperature (°C)"
+        },
+        "data_description": {
+          "hp_enabled": "Replaces the gas combi (heating and hot water) and gas hob.",
+          "tank_loss_kwh_day": "0 = estimate from the tank size.",
+          "legionella_c": "Set to the set point to switch off.",
+          "dhw_start": "Main tank charge, inside the cheap window. It also tops up during Power Up and smart-charge slots.",
+          "hp_capacity_kw": "Undersized on cold days = resistive backup, shown as a higher bill.",
+          "flow_temp_c": "Lower is better: ~35 underfloor, 45 good radiators, 55+ old radiators.",
+          "carnot_frac": "0.35 poor, 0.42 typical, 0.5 excellent.",
+          "base_temp_c": "Outdoor temperature below which heating is needed."
+        }
+      },
+      "heat_costs": {
+        "title": "Gas replaced & costs",
+        "data": {
+          "boiler_eff_heating": "Boiler efficiency - heating",
+          "boiler_eff_dhw": "Boiler efficiency - hot water",
+          "cooking_gas_kwh_day": "Gas hob use (kWh/day)",
+          "induction_ratio": "Induction electric per gas kWh",
+          "fallback_annual_gas_kwh": "Typical annual gas (kWh)",
+          "gas_unit_p": "Gas unit rate (p/kWh)",
+          "gas_standing_p_day": "Gas standing charge (p/day)",
+          "gas_disconnect": "Disconnect gas afterwards",
+          "hp_cost": "Heat pump + tank installed (£)",
+          "hp_grant": "Grant (£)",
+          "induction_cost": "Induction hob (£)",
+          "hp_other_cost": "Other costs, e.g. radiators (£)"
+        },
+        "data_description": {
+          "boiler_eff_dhw": "Lower than heating: combis lose a lot on short draws.",
+          "induction_ratio": "~0.5: induction is roughly twice as efficient.",
+          "fallback_annual_gas_kwh": "Used until enough gas + temperature history exists.",
+          "gas_unit_p": "Check your own tariff.",
+          "gas_disconnect": "Counts the avoided standing charge as a saving.",
+          "hp_grant": "e.g. the Boiler Upgrade Scheme - check current eligibility and amount."
+        }
+      },
       "tariff": {
         "title": "Tariff",
         "data": {
@@ -355,6 +438,10 @@
           "sources_octopus": "Octopus entities",
           "sources_solar_history": "Solar forecast & history",
           "vehicles": "Vehicles (EV charging)",
+          "sources_heat": "Heat pump data",
+          "supply": "Supply & main fuse",
+          "heat": "Heat pump & tank",
+          "heat_costs": "Gas replaced & costs",
           "hardware_preset": "Apply a hardware preset",
           "hardware": "Solar & battery",
           "tariff_preset": "Apply a tariff preset",
@@ -419,6 +506,21 @@
       },
       "ev_tonight": {
         "name": "EV charging expected tonight"
+      },
+      "hp_power": {
+        "name": "Heat pump power"
+      },
+      "hp_tank_temp": {
+        "name": "Hot water tank temperature (est.)"
+      },
+      "peak_import": {
+        "name": "Peak grid import (plan)"
+      },
+      "fuse_usage": {
+        "name": "Main fuse usage (plan peak)"
+      },
+      "annual_hp_saving": {
+        "name": "Annual heat pump saving"
       },
       "plan_target_soc": {
         "name": "Planned overnight charge target"
@@ -497,6 +599,18 @@
       "standard_p": {
         "name": "Standard import rate"
       },
+      "tank_litres": {
+        "name": "Hot water tank size"
+      },
+      "main_fuse_a": {
+        "name": "Main fuse"
+      },
+      "gas_unit_p": {
+        "name": "Gas unit rate"
+      },
+      "hp_capacity_kw": {
+        "name": "Heat pump capacity"
+      },
       "pv_cost_per_kwp": {
         "name": "Solar cost per kWp"
       },
@@ -538,6 +652,12 @@
       },
       "allow_battery_export": {
         "name": "Allow battery export"
+      },
+      "hp_enabled": {
+        "name": "Model heat pump + induction"
+      },
+      "gas_disconnect": {
+        "name": "Disconnect gas"
       }
     },
     "button": {

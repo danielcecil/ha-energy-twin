@@ -5,10 +5,11 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_ARBITRAGE, CONF_BATT_EXPORT
+from .const import CONF_ARBITRAGE, CONF_BATT_EXPORT, CONF_GAS_DISCONNECT, CONF_HP_ENABLED
 from .entity import TwinEntity
 
-SWITCHES = (("arbitrage", CONF_ARBITRAGE), ("allow_battery_export", CONF_BATT_EXPORT))
+SWITCHES = (("arbitrage", CONF_ARBITRAGE), ("allow_battery_export", CONF_BATT_EXPORT),
+            ("hp_enabled", CONF_HP_ENABLED), ("gas_disconnect", CONF_GAS_DISCONNECT))
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback) -> None:

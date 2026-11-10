@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -17,8 +18,8 @@ from homeassistant.util import dt as dt_util
 
 from . import ha_data
 from .const import *  # noqa: F403 - constants module is the single source of config keys
-from .sim import ev as evm, load, pipeline
-from .sim.engine import _slot_cost, follow, plan_horizon, pv_series, settle
+from .sim import ev as evm, heat as heatm, load, pipeline
+from .sim.engine import _slot_cost, charge_headroom, follow, plan_horizon, pv_series, settle
 from .sim.finance import Costs, FinanceTerms
 from .sim.models import EV_ON_KW, SLOT_H, GridEvent, Hardware, Slots, Strategy, TariffConfig
 from .sim.solar import synth_pv_unit
@@ -40,7 +41,7 @@ def _mins(v: str | int) -> int:
 
 def _blank_bucket() -> dict:
     return {"actual_p": 0.0, "twin_p": 0.0, "pv_kwh": 0.0, "export_kwh": 0.0, "grid_charge_kwh": 0.0,
-            "discharge_kwh": 0.0, "load_kwh": 0.0}
+            "discharge_kwh": 0.0, "load_kwh": 0.0, "gas_p": 0.0, "hp_kwh": 0.0}
 
 
 @dataclass
@@ -83,6 +84,10 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.learn_hist: dict[str, evm.VehicleLearn] = {}      # mined from recorder statistics
         self.veh_rt: dict[str, dict] = {}                      # per-car session tracking
         self.ev_info: dict = {}
+        self.gas_model = heatm.default_gas_model(heatm.HeatParams())
+        self.tank_kwh: float | None = None
+        self.hp_plan: heatm.HeatResult | None = None
+        self._last_idx: int | None = None
         nxt = dt_util.utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         # state of the 'add an event' form on the dashboard
         self.form: dict = {"kind": "power_down", "start": nxt, "end": nxt + timedelta(hours=1), "rate": 0.0}
@@ -156,7 +161,25 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         return Hardware(pv_kwp=c[CONF_PV_KWP], inverter_kw=c[CONF_INVERTER_KW], pv_annual_yield=c[CONF_PV_YIELD],
                         battery_kwh=c[CONF_BATT_KWH], battery_max_kw=c[CONF_BATT_KW], round_trip_eff=c[CONF_RTE],
                         reserve_pct=c[CONF_RESERVE], export_limit_kw=c[CONF_EXPORT_LIMIT],
-                        cycle_cost_p=c[CONF_CYCLE_COST])
+                        cycle_cost_p=c[CONF_CYCLE_COST], import_limit_kw=self.import_limit_kw(c))
+
+    @staticmethod
+    def import_limit_kw(c: dict) -> float:
+        """Main cut-out fuse -> the most we plan to draw from the grid (0 = no limit set)."""
+        amps = float(c.get(CONF_FUSE_A) or 0)
+        phases = 3 if str(c.get(CONF_PHASES, "1")) == "3" else 1
+        return amps * float(c.get(CONF_VOLTS) or 230) * phases / 1000.0 * float(c.get(CONF_FUSE_PCT, 90)) / 100.0
+
+    def heat_params(self, cfg: dict | None = None) -> heatm.HeatParams:
+        c = cfg or self.cfg
+        return heatm.HeatParams(
+            enabled=bool(c[CONF_HP_ENABLED]), tank_litres=c[CONF_TANK_L], tank_setpoint_c=c[CONF_TANK_C],
+            tank_loss_kwh_day=c[CONF_TANK_LOSS], legionella_c=c[CONF_LEGIONELLA_C], dhw_start_min=_mins(c[CONF_DHW_START]),
+            hp_elec_max_kw=c[CONF_HP_ELEC_KW], hp_capacity_kw=c[CONF_HP_CAP_KW], flow_temp_c=c[CONF_FLOW_C],
+            carnot_frac=c[CONF_CARNOT], base_temp_c=c[CONF_BASE_TEMP], boiler_eff_heating=c[CONF_BOILER_EFF_H],
+            boiler_eff_dhw=c[CONF_BOILER_EFF_D], cooking_gas_kwh_day=c[CONF_COOK_GAS], induction_ratio=c[CONF_INDUCTION],
+            fallback_annual_gas_kwh=c[CONF_FALLBACK_GAS], gas_unit_p=c[CONF_GAS_P], gas_standing_p_day=c[CONF_GAS_STANDING],
+            gas_disconnect=bool(c[CONF_GAS_DISCONNECT]))
 
     def tariff(self, cfg: dict | None = None) -> TariffConfig:
         c = cfg or self.cfg
@@ -173,8 +196,10 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
 
     def costs(self, c: dict | None = None) -> Costs:
         c = c or self.cfg
+        hp = (max(0.0, c[CONF_HP_COST] + c[CONF_INDUCTION_COST] + c[CONF_HP_OTHER] - c[CONF_HP_GRANT])
+              if c[CONF_HP_ENABLED] else 0.0)
         return Costs(c[CONF_PV_COST_FIXED], c[CONF_PV_COST_KWP], c[CONF_BATT_COST_FIXED], c[CONF_BATT_COST_KWH],
-                     c[CONF_OTHER_COST])
+                     c[CONF_OTHER_COST], hp)
 
     def terms(self, c: dict | None = None) -> FinanceTerms:
         c = c or self.cfg
@@ -189,6 +214,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.acc = {**self.acc, **saved.get("acc", {})}
         self.learn_live = {k: evm.VehicleLearn.from_dict(v) for k, v in (saved.get("learn") or {}).items()}
         self.veh_rt = saved.get("veh_rt") or {}
+        self.tank_kwh = saved.get("tank_kwh")
         for e in saved.get("events", []):
             try:
                 ev = GridEvent(e["kind"], dt_util.parse_datetime(e["start"]), dt_util.parse_datetime(e["end"]),
@@ -204,6 +230,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self._store.async_delay_save(lambda: {
             "soc": self.soc, "last": self.last_tick.isoformat() if self.last_tick else None, "acc": self.acc,
             "learn": {k: v.to_dict() for k, v in self.learn_live.items()}, "veh_rt": self.veh_rt,
+            "tank_kwh": self.tank_kwh,
             "events": [{"kind": e.kind, "start": e.start.isoformat(), "end": e.end.isoformat(), "import_p": e.import_p,
                         "export_p": e.export_p, "bonus_p": e.bonus_p} for e in self.manual_events]}, 30)
 
@@ -340,6 +367,10 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             self.ev_info = []
         sl = Slots(starts, tod, imp, exp, cheap, ev_flag, bonus, list(house), list(evk), pv_unit,
                    list(house), list(evk), list(pv_unit), [""] * len(starts))
+        hp = self.heat_params(c)
+        self.hp_plan = None
+        if hp.enabled:
+            sl.new_kw, sl.exp_new_kw = await self._heat_load(starts, tod, cheap, ev_flag, tariff, hp, now)
         hw_soc = self.soc if self.soc is not None else hw.emin
         res = await self.hass.async_add_executor_job(plan_horizon, sl, hw, st, hw_soc)
         self.diag = {
@@ -350,8 +381,32 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "horizon_slots": len(starts), "live_price_entity": live_imp is not None,
             "live_pv_entity": live_pv is not None,
             "vehicles": self.ev_info,
+            "heat_pump": ({"temps_from": self._temps_source, "gas_model": self.gas_model.source,
+                           "tank_kwh": round(self.tank_kwh or 0.0, 1)} if hp.enabled else "off"),
+            "fuse_limit_kw": round(hw.import_limit_kw, 1),
         }
         return Plan(sl, res, now, hw_soc)
+
+    _temps_source = "synthetic"
+
+    async def _heat_load(self, starts, tod, cheap, ev_flag, tariff, hp, now):
+        c = self.cfg
+        wx = c.get(CONF_WEATHER_ENTITY)
+        fc = await ha_data.cached(self.hass, ("wx", wx), 1800, lambda: ha_data.forecast_temps(self.hass, wx))
+        _, synth = heatm.synth_temps(starts, self.tz)
+        now_c = ha_data.to_float(self._state(c.get(CONF_OUTDOOR_ENTITY)))
+        # forecast where we have it; otherwise a seasonal curve nudged by what the sensor says right now
+        bias = (now_c - synth[0]) if now_c is not None else 0.0
+        temps = [fc[s] if s in fc else synth[i] + bias * math.exp(-i / 24.0) for i, s in enumerate(starts)]
+        self._temps_source = "forecast" if fc else ("sensor-adjusted seasonal" if now_c is not None else "seasonal")
+        tank0 = self.tank_kwh
+        tt = ha_data.to_float(self._state(c.get(CONF_TANK_TEMP_ENTITY)))
+        if tt is not None:                                    # a real tank sensor beats the model
+            tank0 = min(hp.e_leg, max(0.0, hp.tank_litres * heatm.KWH_PER_L_K * (tt - hp.cold_in_c)))
+        win = [tariff.in_cheap_window(t) for t in tod]
+        res = heatm.horizon(starts, tod, self.tz, cheap, ev_flag, win, temps, hp, self.gas_model, tank0)
+        self.hp_plan = res
+        return res.new_kw, list(res.new_kw)
 
     def _plan_index(self, now: datetime) -> int | None:
         if not self.plan:
@@ -389,8 +444,12 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         ev = sum(v for v in ev_states if v) if ev_states else (sl.ev_kw[idx] if total is None else 0.0)
         house = max(0.0, total - ev) if total is not None else sl.house_kw[idx]
         pv = pv_plan[idx]
+        new = sl.new_kw[idx] if sl.new_kw else 0.0            # modelled heat pump + induction hob (not on your meter yet)
+        exp_new = sl.exp_new_kw[idx] if sl.exp_new_kw else 0.0
+        real_house = house
+        house = house + new
         r_plan = plan.battery_kw[idx]
-        r_req = follow(r_plan, sl, idx, house, ev, pv, sl.exp_house_kw[idx], pv_plan[idx])
+        r_req = follow(r_plan, sl, idx, house, ev, pv, sl.exp_house_kw[idx] + exp_new, pv_plan[idx])
         dt_s = (now - self.last_tick).total_seconds() if self.last_tick else 0.0
         self.last_tick = now
         h = dt_s / 3600.0 if 0 < dt_s <= MAX_GAP_S else 0.0       # real elapsed hours since the last tick
@@ -398,11 +457,16 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         soc_before = self.soc
         # advance the virtual battery by the time that really passed (NOT a whole half-hour slot)
         self.soc, r = settle(hw, self.soc, r_req if hw.battery_kwh > 0 else 0.0, ev >= EV_ON_KW,
-                             hw.discharge_cap(pv), dt=h or SLOT_H, step=h)
+                             hw.discharge_cap(pv), dt=h or SLOT_H, step=h,
+                             max_charge=charge_headroom(hw, house + ev - pv))
         grid = house + ev - pv + r
         imp_p, exp_p, bonus = sl.import_p[idx], sl.export_p[idx], sl.bonus_p[idx]
         cost_p, exp_kw = _slot_cost(hw, grid, r, imp_p, exp_p, bonus)
-        actual_per_h = (house + ev) * imp_p                    # what you really pay right now (p/h)
+        hp_p = self.heat_params(c)
+        gas_kw = self.hp_plan.gas_kw[idx] if (hp_p.enabled and self.hp_plan) else 0.0
+        if not (hp_p.enabled and self.hp_plan):
+            hp_p = replace(hp_p, gas_standing_p_day=0.0)
+        actual_per_h = (real_house + ev) * imp_p               # what you really pay right now (p/h)
         if 0 < dt_s <= MAX_GAP_S:
             h = dt_s / 3600.0
             self._roll_buckets(now)
@@ -411,11 +475,21 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
                 b["twin_p"] += cost_p / SLOT_H * h
                 b["pv_kwh"] += pv * h
                 b["export_kwh"] += exp_kw * h
-                b["load_kwh"] += (house + ev) * h
+                b["load_kwh"] += (real_house + ev) * h
+                b["hp_kwh"] = b.get("hp_kwh", 0.0) + new * h
+                b["gas_p"] = b.get("gas_p", 0.0) + (gas_kw * hp_p.gas_unit_p
+                                                    + (hp_p.gas_standing_p_day / 24.0 if hp_p.gas_disconnect else 0.0)) * h
                 b["grid_charge_kwh"] += max(0.0, r - max(0.0, -(house + ev - pv))) * h if r > 0 else 0.0
                 b["discharge_kwh"] += -r * h if r < 0 else 0.0
         mode = self._mode(sl.event[idx], r, grid, exp_kw, house + ev - pv, sl.cheap[idx])
-        self._live = {"house": house, "ev": ev, "pv": pv, "battery": r, "grid": grid, "export": exp_kw,
+        hpr = self.hp_plan
+        if hp_p.enabled and hpr and idx != self._last_idx:      # a new half-hour: carry the tank state forward
+            self.tank_kwh = hpr.tank_start[idx]
+        self._last_idx = idx
+        self._live = {"hp_kw": hpr.hp_kw[idx] if hpr else 0.0, "induction_kw": hpr.induction_kw[idx] if hpr else 0.0,
+                      "tank_kwh": hpr.tank_end[idx] if hpr else None, "cop_space": hpr.cop_space[idx] if hpr else None,
+                      "cop_dhw": hpr.cop_dhw[idx] if hpr else None, "tank_charging": bool(hpr and hpr.charging[idx]),
+                      "house": real_house, "ev": ev, "pv": pv, "battery": r, "grid": grid, "export": exp_kw,
                       "import_p": imp_p, "export_p": exp_p, "mode": mode, "idx": idx, "soc_before": soc_before}
         return self._live
 
@@ -458,6 +532,14 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "events": [{"kind": e.kind, "start": e.start.isoformat(), "end": e.end.isoformat()}
                        for e in sorted(self._all_events(now), key=lambda e: e.start)],
         }
+        hpp = self.heat_params()
+        if hpp.enabled and live:
+            e = live.get("tank_kwh")
+            out["hp"] = {"tank_kwh": round(e, 1) if e is not None else None,
+                         "tank_pct": round(100 * e / hpp.e_max, 0) if e is not None else None,
+                         "tank_temp_c": (round(hpp.cold_in_c + e / (hpp.tank_litres * heatm.KWH_PER_L_K), 1)
+                                         if e is not None else None)}
+        out["supply"] = {"limit_kw": round(hw.import_limit_kw, 1)}
         if self.plan:
             out["plan"] = self._plan_summary(hw)
         return out
@@ -471,7 +553,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         bexp = 0.0
         for t in range(n):
             if r.battery_kw[t] < 0:
-                bexp += max(0.0, -r.battery_kw[t] - max(0.0, sl.exp_house_kw[t] + sl.exp_ev_kw[t] - pv[t])) * SLOT_H
+                newk = sl.exp_new_kw[t] if sl.exp_new_kw else 0.0
+                bexp += max(0.0, -r.battery_kw[t] - max(0.0, sl.exp_house_kw[t] + newk + sl.exp_ev_kw[t] - pv[t])) * SLOT_H
         # overnight target: SoC reached by the end of the next cheap block
         target, in_block = None, False
         for t in range(n):
@@ -489,13 +572,18 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "plan_cost_gbp": round(plan_cost, 2),
             "plan_baseline_gbp": round(base, 2),
             "plan_saving_gbp": round(base - plan_cost, 2),
+            "peak_import_kw": round(r.peak_import_kw, 2),
+            "fuse_pct": round(100 * r.peak_import_kw / hw.import_limit_kw, 0) if hw.import_limit_kw > 0 else None,
             "series": {
                 "t": [int(s.timestamp() * 1000) for s in sl.start],
                 "battery_kw": [round(x, 2) for x in r.battery_kw],
                 "grid_kw": [round(x, 2) for x in r.grid_kw],
                 "soc_pct": [round(100 * x / cap, 1) for x in r.soc],
                 "pv_kw": [round(x, 2) for x in pv],
-                "load_kw": [round(sl.house_kw[i] + sl.ev_kw[i], 2) for i in range(n)],
+                "load_kw": [round(sl.house_kw[i] + sl.ev_kw[i] + (sl.new_kw[i] if sl.new_kw else 0.0), 2) for i in range(n)],
+                "hp_kw": [round(x, 2) for x in (self.hp_plan.hp_kw if self.hp_plan else [0.0] * n)],
+                "tank_pct": [round(100 * x / max(self.heat_params().e_max, 1e-9), 1)
+                             for x in (self.hp_plan.tank_end if self.hp_plan else [0.0] * n)],
                 "import_p": [round(x, 1) for x in sl.import_p],
                 "export_p": [round(x, 1) for x in sl.export_p],
                 "event": sl.event,
@@ -526,7 +614,31 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             pipeline.build_profile, total, ev_rows, self.tz, self.tariff(c), c[CONF_NIGHT_BASE],
             c[CONF_DAILY_HOUSE], c[CONF_DAILY_EV])
         self.profile, self.hist = prof, (hh, he, days, last)
+        await self._async_calibrate_gas()
         self.plan_dirty = True
+
+    async def _async_calibrate_gas(self) -> None:
+        c = self.cfg
+        hp = self.heat_params(c)
+        gas = (c.get(CONF_GAS_STAT) or "").strip()
+        tstat = (c.get(CONF_OUTDOOR_STAT) or c.get(CONF_OUTDOOR_ENTITY) or "").strip()
+        if not (hp.enabled and gas and tstat):
+            self.gas_model = heatm.default_gas_model(hp)
+            return
+        days = int(c[CONF_HISTORY_DAYS])
+        g = await ha_data.cached(self.hass, ("gas", gas, days), 3600, lambda: ha_data.history_hourly(self.hass, [gas], days))
+        t = await ha_data.cached(self.hass, ("temp", tstat, days), 3600,
+                                 lambda: ha_data.history_hourly(self.hass, [tstat], days, "mean"))
+
+        def daily(rows, mean: bool):
+            acc: dict = {}
+            for s_, v in rows:
+                d = s_.astimezone(self.tz).date()
+                acc.setdefault(d, []).append(v)
+            return {d: (sum(v) / len(v) if mean else sum(v)) for d, v in acc.items() if (mean or len(v) >= 20)}
+
+        self.gas_model = await self.hass.async_add_executor_job(
+            heatm.calibrate, daily(g.get(gas, []), False), daily(t.get(tstat, []), True), hp)
 
     def _year(self, c: dict) -> Slots:
         hw, tariff = self.hardware(c), self.tariff(c)
@@ -536,6 +648,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             prof, hh, he, days, last, hw=hw, tariff=tariff, tz=self.tz, lat=self.hass.config.latitude,
             lon=self.hass.config.longitude, today=dt_util.now().date(),
             vehicles=self.vehicles or None, learns={v.name: self.learn_for(v.name) for v in self.vehicles},
+            heat=(self.heat_params(c), self.gas_model) if c[CONF_HP_ENABLED] else None,
             pd=(c[CONF_PD_PER_MONTH], c[CONF_PD_START_HOUR], c[CONF_PD_HOURS]),
             pu=(c[CONF_PU_PER_MONTH], c[CONF_PU_START_HOUR], c[CONF_PU_HOURS]))
 
@@ -551,7 +664,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
                 costs, terms = self.costs(c), self.terms(c)
 
                 def job() -> dict:
-                    return pipeline.annual_report(self._year(c), hw, st, tariff, costs, terms)
+                    return pipeline.annual_report(self._year(c), hw, st, tariff, costs, terms, heat_p=self.heat_params(c))
 
                 self.annual = await self.hass.async_add_executor_job(job)
                 self.annual["history_days"] = self.hist[2]
@@ -576,7 +689,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.async_set_updated_data(self._snapshot(dt_util.utcnow(), hw, self._live))
 
         def job() -> list[dict]:
-            return pipeline.run_sweep(self._year(c), hw, st, tariff, costs, terms, batteries, arrays, inverters)
+            return pipeline.run_sweep(self._year(c), hw, st, tariff, costs, terms, batteries, arrays, inverters,
+                                      heat_p=self.heat_params(c))
 
         try:
             self.sweep_rows = await self.hass.async_add_executor_job(job)

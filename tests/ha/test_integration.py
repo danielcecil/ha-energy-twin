@@ -312,3 +312,65 @@ async def test_live_twin_soc_moves_at_real_speed(hass: HomeAssistant):
     for k in range(1, 15):                                                  # 15 min in total
         c._step(t + timedelta(minutes=k), hw, idx)
     assert c.soc < hw.emax * 0.5                                            # nowhere near full after 15 min
+
+
+async def test_heat_pump_and_main_fuse(hass: HomeAssistant):
+    hass.states.async_set("sensor.outdoor", "4.0", {"unit_of_measurement": "\u00b0C"})
+    entry = await _setup(hass, hp_enabled=True, outdoor_temp_entity="sensor.outdoor", main_fuse_a=63, strategy="rules")
+    c = entry.runtime_data
+    hw = c.hardware()
+    assert hw.import_limit_kw == pytest.approx(63 * 230 * 0.9 / 1000)             # 13.04 kW usable of a 63 A fuse
+    sl = c.plan.slots
+    assert sl.new_kw and max(sl.new_kw) > 1.0 and c.hp_plan is not None
+    assert c.diag["heat_pump"]["temps_from"] in ("sensor-adjusted seasonal", "seasonal", "forecast")
+    assert float(hass.states.get("sensor.home_energy_twin_heat_pump_power").state) >= 0
+    tank = float(hass.states.get("sensor.home_energy_twin_hot_water_tank_temperature_est").state)
+    assert 15 < tank < 56
+    peak = float(hass.states.get("sensor.home_energy_twin_peak_grid_import_plan").state)
+    unavoidable = max(h + e + n - p for h, e, n, p in zip(sl.exp_house_kw, sl.exp_ev_kw, sl.exp_new_kw,
+                                                          [u * hw.pv_kwp for u in sl.exp_pv_unit]))
+    assert peak <= max(hw.import_limit_kw, unavoidable) + 0.3
+    assert hass.states.get("sensor.home_energy_twin_main_fuse_usage_plan_peak").state not in ("unknown", "unavailable")
+    # yearly economics: gas avoided minus extra electricity, and the heat pump cost is in the outlay
+    await c._async_annual()
+    a = c.annual
+    h = a["heat"]
+    assert h["gas_kwh_displaced"] > 8000 and h["net_hp_saving"] == a["hp_saving"]
+    assert a["finance"]["capex"] >= 11000 + 800 - 7500
+    st = hass.states.get("sensor.home_energy_twin_annual_heat_pump_saving")
+    assert float(st.state) == a["hp_saving"] and st.attributes["scop_space"] > 2
+    import pathlib, yaml
+    from homeassistant.helpers.template import Template
+    dash = yaml.safe_load(pathlib.Path("dashboard/energy_twin_dashboard.yaml").read_text())
+    card = next(c_ for v in dash["views"] if v["path"] == "heatpump" for c_ in v["cards"]
+                if c_.get("title", "").startswith("What the heat pump does"))
+    out = Template(card["content"], hass).async_render()
+    assert "Net saving" in out and "Gas no longer burned" in out and f"£{a['hp_saving']}" in out
+    # live ledger: modelled heat pump electricity is charged to the twin, gas is credited
+    t = dt_util.utcnow()
+    idx = c._plan_index(t)
+    hw0 = c.hardware()
+    c.last_tick = t - timedelta(seconds=60)
+    c._step(t, hw0, idx)
+    day = c.acc["day"]
+    assert day["gas_p"] > 0 and day["hp_kwh"] >= 0
+    # the fuse is editable from the dashboard and takes effect immediately
+    await hass.services.async_call("number", "set_value",
+                                   {"entity_id": "number.home_energy_twin_main_fuse", "value": 40}, blocking=True)
+    assert c.hardware().import_limit_kw == pytest.approx(40 * 230 * 0.9 / 1000)
+
+
+async def test_heat_pump_off_changes_nothing(hass: HomeAssistant):
+    entry = await _setup(hass, strategy="rules")
+    c = entry.runtime_data
+    assert not c.plan.slots.new_kw and c.hp_plan is None and c.diag["heat_pump"] == "off"
+    await c._async_annual()
+    assert c.annual["hp_saving"] == 0 and c.annual["heat"] is None
+
+
+async def test_heat_options_flow_steps(hass: HomeAssistant):
+    entry = await _setup(hass)
+    for step in ("supply", "heat", "heat_costs", "sources_heat"):
+        r = await hass.config_entries.options.async_init(entry.entry_id)
+        r = await hass.config_entries.options.async_configure(r["flow_id"], {"next_step_id": step})
+        assert r["type"] == "form" and r["step_id"] == step, step

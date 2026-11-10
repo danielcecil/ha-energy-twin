@@ -22,6 +22,40 @@ CONF_EV_STATS = "ev_stats"                            # comma separated EV energ
 CONF_HISTORY_DAYS = "history_days"
 CONF_VEHICLES = "vehicles"                            # list of per-car dicts (see sim/ev.py Vehicle)
 
+# ---- heat pump / supply --------------------------------------------------------------------
+CONF_GAS_STAT = "gas_stat"                     # gas consumption statistic (kWh)
+CONF_OUTDOOR_ENTITY = "outdoor_temp_entity"
+CONF_OUTDOOR_STAT = "outdoor_temp_stat"        # statistic id for outdoor temperature history (default: the entity)
+CONF_WEATHER_ENTITY = "weather_entity"         # hourly forecast for the planner
+CONF_TANK_TEMP_ENTITY = "tank_temp_entity"
+CONF_FUSE_A = "main_fuse_a"
+CONF_PHASES = "supply_phases"
+CONF_VOLTS = "supply_voltage"
+CONF_FUSE_PCT = "fuse_usable_pct"
+CONF_HP_ENABLED = "hp_enabled"
+CONF_TANK_L = "tank_litres"
+CONF_TANK_C = "tank_setpoint_c"
+CONF_TANK_LOSS = "tank_loss_kwh_day"
+CONF_LEGIONELLA_C = "legionella_c"
+CONF_DHW_START = "dhw_start"
+CONF_HP_ELEC_KW = "hp_elec_max_kw"
+CONF_HP_CAP_KW = "hp_capacity_kw"
+CONF_FLOW_C = "flow_temp_c"
+CONF_CARNOT = "carnot_frac"
+CONF_BASE_TEMP = "base_temp_c"
+CONF_BOILER_EFF_H = "boiler_eff_heating"
+CONF_BOILER_EFF_D = "boiler_eff_dhw"
+CONF_COOK_GAS = "cooking_gas_kwh_day"
+CONF_INDUCTION = "induction_ratio"
+CONF_FALLBACK_GAS = "fallback_annual_gas_kwh"
+CONF_GAS_P = "gas_unit_p"
+CONF_GAS_STANDING = "gas_standing_p_day"
+CONF_GAS_DISCONNECT = "gas_disconnect"
+CONF_HP_COST = "hp_cost"
+CONF_HP_GRANT = "hp_grant"
+CONF_INDUCTION_COST = "induction_cost"
+CONF_HP_OTHER = "hp_other_cost"
+
 # ---- presets -------------------------------------------------------------------------------
 CONF_HW_PRESET = "hardware_preset"
 CONF_TARIFF_PRESET = "tariff_preset"
@@ -98,6 +132,12 @@ DEFAULTS: dict = {
     CONF_ESCALATION: 3.0, CONF_PV_DEG: 0.5, CONF_BATT_DEG: 2.0, CONF_DISCOUNT: 3.0, CONF_HORIZON: 20,
     CONF_STRATEGY: "optimised", CONF_MARGIN: 15.0, CONF_EXPORT_FROM: "16:00:00",
     CONF_EXPORT_MARGIN: 1.0, CONF_ARBITRAGE: True, CONF_BATT_EXPORT: True,
+    CONF_FUSE_A: 100.0, CONF_PHASES: "1", CONF_VOLTS: 230.0, CONF_FUSE_PCT: 90.0,
+    CONF_HP_ENABLED: False, CONF_TANK_L: 270.0, CONF_TANK_C: 50.0, CONF_TANK_LOSS: 0.0, CONF_LEGIONELLA_C: 60.0,
+    CONF_DHW_START: "04:00:00", CONF_HP_ELEC_KW: 3.0, CONF_HP_CAP_KW: 8.0, CONF_FLOW_C: 45.0, CONF_CARNOT: 0.42,
+    CONF_BASE_TEMP: 15.5, CONF_BOILER_EFF_H: 0.85, CONF_BOILER_EFF_D: 0.72, CONF_COOK_GAS: 1.0, CONF_INDUCTION: 0.5,
+    CONF_FALLBACK_GAS: 11500.0, CONF_GAS_P: 6.0, CONF_GAS_STANDING: 30.0, CONF_GAS_DISCONNECT: True,
+    CONF_HP_COST: 11000.0, CONF_HP_GRANT: 7500.0, CONF_INDUCTION_COST: 800.0, CONF_HP_OTHER: 0.0,
     CONF_NIGHT_BASE: 0.3, CONF_DAILY_HOUSE: 9.0, CONF_DAILY_EV: 15.0,
     CONF_PD_PER_MONTH: 0, CONF_PD_START_HOUR: 17, CONF_PD_HOURS: 1,
     CONF_PU_PER_MONTH: 0, CONF_PU_START_HOUR: 13, CONF_PU_HOURS: 2,

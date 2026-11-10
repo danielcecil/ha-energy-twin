@@ -86,6 +86,7 @@ views:
           - {type: tile, entity: sensor.home_energy_twin_grid_power, name: Grid (+import)}
           - {type: tile, entity: sensor.home_energy_twin_import_price, name: Import price}
           - {type: tile, entity: sensor.home_energy_twin_export_price, name: Export price}
+          - {type: tile, entity: sensor.home_energy_twin_main_fuse_usage_plan_peak, name: Fuse used (plan peak)}
       - type: entities
         title: What it would have saved you
         entities:
@@ -239,6 +240,90 @@ views:
           | {{ r.month }} | £{{ r.baseline }} | £{{ r.scenario }} | **£{{ r.saving }}** |
           {% endfor %}
           {% else %}Annual model still calculating…{% endif %}
+
+  # ───────────────────────────── HEAT PUMP ─────────────────────────────
+  - title: Heat pump
+    path: heatpump
+    icon: mdi:heat-pump
+    cards:
+      - type: entities
+        title: Heat pump & induction hob (modelled - nothing is installed yet)
+        show_header_toggle: false
+        entities:
+          - switch.home_energy_twin_model_heat_pump_induction
+          - switch.home_energy_twin_disconnect_gas
+          - number.home_energy_twin_hot_water_tank_size
+          - number.home_energy_twin_heat_pump_capacity
+          - number.home_energy_twin_gas_unit_rate
+          - number.home_energy_twin_main_fuse
+      - type: grid
+        columns: 3
+        square: false
+        cards:
+          - {type: tile, entity: sensor.home_energy_twin_heat_pump_power, name: Heat pump now}
+          - {type: tile, entity: sensor.home_energy_twin_hot_water_tank_temperature_est, name: Tank (est.)}
+          - {type: tile, entity: sensor.home_energy_twin_annual_heat_pump_saving, name: Saving / year}
+          - {type: tile, entity: sensor.home_energy_twin_peak_grid_import_plan, name: Plan peak import}
+          - {type: tile, entity: sensor.home_energy_twin_main_fuse_usage_plan_peak, name: Fuse used at peak}
+      - type: markdown
+        title: What the heat pump does to your bills (per year)
+        content: |
+          {% set s = 'sensor.home_energy_twin_annual_heat_pump_saving' %}
+          {% if state_attr(s, 'hp_electricity_kwh') is not none %}
+          | | |
+          |---|--:|
+          | Gas no longer burned | {{ state_attr(s, 'gas_kwh_displaced') }} kWh |
+          | Gas cost avoided | £{{ state_attr(s, 'gas_cost_avoided') }} |
+          | Gas standing charge avoided | £{{ state_attr(s, 'gas_standing_avoided') }} |
+          | Extra electricity | {{ state_attr(s, 'hp_electricity_kwh') }} kWh (+{{ state_attr(s, 'induction_kwh') }} induction) |
+          | Cost of that electricity (no solar/battery) | £{{ state_attr(s, 'hp_grid_cost') }} |
+          | **Net saving** | **£{{ states(s) }}** |
+          | Seasonal COP: heating / hot water | {{ state_attr(s, 'scop_space') }} / {{ state_attr(s, 'scop_dhw') }} |
+          | Electricity used in cheap slots | {{ state_attr(s, 'cheap_share_pct') }}% |
+          | Resistive backup (heat pump too small) | {{ state_attr(s, 'backup_electricity_kwh') }} kWh |
+
+          *Gas split: {{ state_attr(s, 'gas_model').source if state_attr(s, 'gas_model') else '?' }}
+          ({{ state_attr(s, 'gas_model').days if state_attr(s, 'gas_model') else 0 }} days of gas + temperature history).
+          With no history it uses typical figures. Treat the result as a range: COP, flow temperature and sizing all matter.*
+          {% else %}Switch the heat pump model on (above), then wait a few seconds for the yearly model.{% endif %}
+      - type: custom:apexcharts-card
+        header: {show: true, title: Heat pump & hot water tank - next ~33 hours, show_states: false}
+        graph_span: 36h
+        span: {start: hour}
+        now: {show: true, label: Now}
+        yaxis:
+          - {id: kw, decimals: 1, apex_config: {title: {text: kW}}}
+          - {id: pct, opposite: true, min: 0, max: 100, decimals: 0, apex_config: {title: {text: "Tank %"}}}
+        apex_config:
+          chart: {height: 280}
+        series:
+          - entity: sensor.home_energy_twin_planned_overnight_charge_target
+            name: Heat pump kW
+            type: column
+            yaxis_id: kw
+            color: "#e65100"
+            data_generator: |
+              const s = entity.attributes.series; if (!s || !s.hp_kw) return [];
+              return s.t.map((t, i) => [t, s.hp_kw[i]]);
+          - entity: sensor.home_energy_twin_planned_overnight_charge_target
+            name: Tank energy %
+            type: line
+            curve: smooth
+            yaxis_id: pct
+            color: "#00838f"
+            data_generator: |
+              const s = entity.attributes.series; if (!s || !s.tank_pct) return [];
+              return s.t.map((t, i) => [t, s.tank_pct[i]]);
+          - entity: sensor.home_energy_twin_planned_overnight_charge_target
+            name: Import price p/kWh
+            type: line
+            curve: stepline
+            yaxis_id: kw
+            color: "#6d4c41"
+            stroke_width: 1
+            data_generator: |
+              const s = entity.attributes.series; if (!s) return [];
+              return s.t.map((t, i) => [t, s.import_p[i] / 10]);
 
   # ───────────────────────────── 3. SIZE SWEEP ─────────────────────────────
   - title: Size sweep

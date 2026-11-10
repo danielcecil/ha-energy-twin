@@ -55,6 +55,37 @@ STEPS: dict[str, list[tuple[str, Any, bool]]] = {
         (CONF_EV_STATS, _TEXT, False),
         (CONF_HISTORY_DAYS, _num(14, 730, 1, "days"), False),
     ],
+    "sources_heat": [
+        (CONF_GAS_STAT, _TEXT, False),
+        (CONF_OUTDOOR_ENTITY, _ent(), False),
+        (CONF_OUTDOOR_STAT, _TEXT, False),
+        (CONF_WEATHER_ENTITY, _ent(), False),
+        (CONF_TANK_TEMP_ENTITY, _ent(), False),
+    ],
+    "supply": [
+        (CONF_FUSE_A, _num(10, 400, 1, "A"), True),
+        (CONF_PHASES, _choice({"1": "Single phase", "3": "Three phase"}), True),
+        (CONF_VOLTS, _num(100, 480, 1, "V"), True),
+        (CONF_FUSE_PCT, _num(30, 100, 1, "%"), True),
+    ],
+    "heat": [
+        (CONF_HP_ENABLED, _BOOL, True),
+        (CONF_TANK_L, _num(50, 1000, 10, "L"), True), (CONF_TANK_C, _num(40, 70, 1, "°C"), True),
+        (CONF_TANK_LOSS, _num(0, 10, 0.1, "kWh/day"), True), (CONF_LEGIONELLA_C, _num(40, 75, 1, "°C"), True),
+        (CONF_DHW_START, _TIME, True),
+        (CONF_HP_ELEC_KW, _num(0.5, 15, 0.1, "kW"), True), (CONF_HP_CAP_KW, _num(2, 30, 0.5, "kW"), True),
+        (CONF_FLOW_C, _num(25, 70, 1, "°C"), True), (CONF_CARNOT, _num(0.25, 0.65, 0.01), True),
+        (CONF_BASE_TEMP, _num(10, 20, 0.5, "°C"), True),
+    ],
+    "heat_costs": [
+        (CONF_BOILER_EFF_H, _num(0.5, 1.0, 0.01), True), (CONF_BOILER_EFF_D, _num(0.4, 1.0, 0.01), True),
+        (CONF_COOK_GAS, _num(0, 10, 0.1, "kWh/day"), True), (CONF_INDUCTION, _num(0.2, 1.0, 0.01), True),
+        (CONF_FALLBACK_GAS, _num(1000, 40000, 100, "kWh/yr"), True),
+        (CONF_GAS_P, _num(0, 30, 0.01, "p/kWh"), True), (CONF_GAS_STANDING, _num(0, 100, 0.1, "p/day"), True),
+        (CONF_GAS_DISCONNECT, _BOOL, True),
+        (CONF_HP_COST, _num(0, 50000, 100, "£"), True), (CONF_HP_GRANT, _num(0, 20000, 100, "£"), True),
+        (CONF_INDUCTION_COST, _num(0, 5000, 50, "£"), True), (CONF_HP_OTHER, _num(0, 30000, 100, "£"), True),
+    ],
     "tariff": [
         (CONF_CHEAP_START, _TIME, True), (CONF_CHEAP_END, _TIME, True),
         (CONF_CHEAP_P, _num(-50, 100, 0.01, "p/kWh"), True),
@@ -117,7 +148,8 @@ VEHICLE_FIELDS: list[tuple[str, Any, bool, Any]] = [
     ("plug_states", _TEXT, False, None),
     ("home_states", _TEXT, False, None),
 ]
-MENU = ["sources_live", "sources_octopus", "sources_solar_history", "vehicles", "hardware_preset", "hardware", "tariff_preset",
+MENU = ["sources_live", "sources_octopus", "sources_solar_history", "sources_heat", "vehicles", "supply",
+        "heat", "heat_costs", "hardware_preset", "hardware", "tariff_preset",
         "tariff", "finance", "strategy", "assumptions", "done"]
 
 
@@ -299,7 +331,8 @@ def _make_step(name: str):
     return handler
 
 
-for _name in ("sources_live", "sources_octopus", "sources_solar_history", "hardware", "tariff", "finance", "strategy",
+for _name in ("sources_live", "sources_octopus", "sources_solar_history", "sources_heat", "supply", "heat",
+              "heat_costs", "hardware", "tariff", "finance", "strategy",
               "assumptions"):
     if not hasattr(EnergyTwinOptionsFlow, f"async_step_{_name}"):
         setattr(EnergyTwinOptionsFlow, f"async_step_{_name}", _make_step(_name))

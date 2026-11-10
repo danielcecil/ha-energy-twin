@@ -19,7 +19,7 @@ def pv_series(unit: list[float], hw: Hardware) -> list[float]:
 
 
 def settle(hw: Hardware, soc: float, r_req: float, ev_on: bool, cap_d: float,
-           dt: float = DT, step: float | None = None) -> tuple[float, float]:
+           dt: float = DT, step: float | None = None, max_charge: float | None = None) -> tuple[float, float]:
     """Apply a requested AC battery power within physical limits. Returns (new_soc, r_actual).
 
     `dt` is the window the power limits are checked over (the planner uses a whole half-hour slot);
@@ -30,12 +30,20 @@ def settle(hw: Hardware, soc: float, r_req: float, ev_on: bool, cap_d: float,
     step = dt if step is None else step
     eta = hw.eta
     if r_req > _EPS:
-        r = max(0.0, min(r_req, hw.charge_kw, (hw.emax - soc) / (eta * dt)))
+        cap_c = hw.charge_kw if max_charge is None else min(hw.charge_kw, max(0.0, max_charge))
+        r = max(0.0, min(r_req, cap_c, (hw.emax - soc) / (eta * dt)))
         return soc + r * eta * step, r
     if r_req < -_EPS and not ev_on:
         r = -max(0.0, min(-r_req, cap_d, max(0.0, soc - hw.emin) * eta / dt))
         return soc + r * step / eta, r
     return soc, 0.0
+
+
+def charge_headroom(hw: Hardware, load_net: float) -> float | None:
+    """kW the main fuse still allows us to pull for battery charging (None = no limit configured)."""
+    if hw.import_limit_kw <= 0:
+        return None
+    return max(0.0, hw.import_limit_kw - max(0.0, load_net))
 
 
 def _slot_cost(hw: Hardware, grid: float, r: float, imp_p: float, exp_p: float, bonus_p: float) -> tuple[float, float]:
@@ -167,6 +175,8 @@ def plan_dp(sl: Slots, hw: Hardware, st: Strategy, soc0: float, pv: list[float],
         bad = (chg > hw.charge_kw + 1e-6) | (dis > hw.discharge_cap(pv[t]) + 1e-6)
         if sl.ev_kw[t] >= EV_ON_KW:
             bad |= dis > 1e-9
+        if hw.import_limit_kw > 0:
+            bad |= chg > max(0.0, hw.import_limit_kw - max(0.0, D)) + 1e-6   # main fuse
         if not sl.cheap[t]:
             bad |= chg > max(0.0, -D) + 1e-6          # only solar may charge outside cheap slots
         if not st.allow_battery_export:
@@ -234,8 +244,20 @@ def follow(r_plan: float, sl: Slots, t: int, house: float, ev: float, pv: float,
 
 # --------------------------------------------------------------------------- simulate
 def simulate(sl: Slots, hw: Hardware, st: Strategy, soc0: float | None = None,
-             chunk_tod_min: int | None = None) -> Result:
-    """Run the strategy over `sl`, scoring against actual loads/PV."""
+             chunk_tod_min: int | None = None, baseline_with_new: bool = False) -> Result:
+    """Run the strategy over `sl`, scoring against actual loads/PV.
+
+    `sl.new_kw` (heat pump, induction hob) is real demand the battery can serve and the grid must supply,
+    but is left out of the baseline bill unless `baseline_with_new` (used to isolate what solar+battery save).
+    """
+    base_house = sl.house_kw
+    base_new = sl.new_kw or [0.0] * sl.n
+    if sl.new_kw or sl.exp_new_kw:
+        enew = sl.exp_new_kw or [0.0] * sl.n
+        sl = Slots(**{**sl.__dict__,
+                      "house_kw": [a + b for a, b in zip(sl.house_kw, base_new)],
+                      "exp_house_kw": [a + b for a, b in zip(sl.exp_house_kw, enew)],
+                      "new_kw": [], "exp_new_kw": []})
     n = sl.n
     pv = pv_series(sl.pv_unit, hw)
     exp_pv = pv_series(sl.exp_pv_unit, hw)
@@ -279,12 +301,14 @@ def simulate(sl: Slots, hw: Hardware, st: Strategy, soc0: float | None = None,
                            sl.exp_house_kw[t] * (1 + st.margin_pct * 0.005), exp_pv[t])
         else:
             r_req = _rules_request(ctx, sl, hw, st, t, soc, house, ev, p)
-        soc, r = settle(hw, soc, r_req, ev_on, hw.discharge_cap(p))
+        soc, r = settle(hw, soc, r_req, ev_on, hw.discharge_cap(p),
+                        max_charge=charge_headroom(hw, house + ev - p))
         grid = house + ev - p + r
         cost, exp = _slot_cost(hw, grid, r, sl.import_p[t], sl.export_p[t], sl.bonus_p[t])
         res.battery_kw[t], res.grid_kw[t], res.export_kw[t], res.soc[t] = r, grid, exp, soc
         res.cost_p[t] = cost
-        res.baseline_p[t] = (house + ev) * DT * sl.import_p[t]
+        res.baseline_p[t] = ((base_house[t] + (base_new[t] if baseline_with_new else 0.0)) + ev) * DT * sl.import_p[t]
+        res.peak_import_kw = max(res.peak_import_kw, grid)
         if r > 0:
             solar_part = max(0.0, -(house + ev - p))
             res.grid_charge_kwh += max(0.0, r - solar_part) * DT
