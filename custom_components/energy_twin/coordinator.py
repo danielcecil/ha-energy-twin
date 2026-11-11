@@ -98,6 +98,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.ledger_start: datetime | None = None
         self._oct_cache: tuple = (0.0, "", {})
         self._oct_today_kwh: float | None = None
+        self._oct_diag: dict = {}
         self._k_ema, self._k_n = 1.0, 0                             # meter / integrated-power ratio (calibration)
         self.learned_rates: dict[str, float] = {}                    # real cheap / standard / export p/kWh seen in those rates
         self.tank_kwh: float | None = None
@@ -252,6 +253,10 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.slot_applied = dict((saved.get("slots") or {}).get("applied") or {})
         self.hh_history = {k: float(v) for k, v in (saved.get("hh") or {}).items()}
         self.ledger_start = dt_util.parse_datetime(saved["ledger_start"]) if saved.get("ledger_start") else None
+        # after a restart the Octopus sensors can take a while to repopulate; keep acting on what we already know
+        cutoff = dt_util.utcnow() - timedelta(days=3)
+        self.official = {t_: v for iso, v in self.hh_history.items()
+                         if (t_ := dt_util.parse_datetime(iso)) is not None and t_ >= cutoff}
         if isinstance(saved.get("meter_k"), list) and len(saved["meter_k"]) == 2:
             self._k_ema, self._k_n = float(saved["meter_k"][0]), int(saved["meter_k"][1])
         self.learned_rates = {k: float(v) for k, v in (saved.get("learned_rates") or {}).items()}
@@ -470,7 +475,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "vehicles": self.ev_info,
             "octopus_consumption": ({**self._octopus_ids(self.cfg.get(CONF_CONSUMPTION_STAT) or ""),
                                      "official_half_hours": len(self.official),
-                                     "history_days": round(len(self.hh_history) / 48, 1)}
+                                     "history_days": round(len(self.hh_history) / 48, 1), **self._oct_diag}
                                     if "." in (self.cfg.get(CONF_CONSUMPTION_STAT) or "") else "no consumption sensor set"),
             "power_integration": ("every reading as it arrives" if self._integ else "sampled once a minute"),
             "meter": ({"entity": self.cfg.get(CONF_CONSUMPTION_STAT), "calibration_factor": round(self.meter_k, 3),
@@ -635,7 +640,18 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         ids = self._octopus_ids(ent)
         today_state = self._state(ids.get("today"))
         self._oct_today_kwh = ha_data.energy_kwh(today_state)
-        merged = {**ha_data.parse_charges(today_state), **ha_data.parse_charges(self._state(ids.get("previous")))}
+        prev_state = self._state(ids.get("previous"))
+        tc, pc = ha_data.parse_charges(today_state), ha_data.parse_charges(prev_state)
+        merged = {**tc, **pc}
+        self._oct_diag = {
+            "today_sensor_state": today_state.state if today_state else "not found",
+            "today_half_hours_read": len(tc),
+            "previous_sensor_state": prev_state.state if prev_state else "not found",
+            "previous_half_hours_read": len(pc),
+            "latest_half_hour": max(merged).isoformat() if merged else None,
+            **({"hint": "These sensors have no 'charges' attribute right now. In Developer tools > States, open them and "
+                        "check the attributes; Octopus publishes yesterday's data some hours after midnight."}
+               if not merged else {})}
         if merged:
             self.official = merged
             for s_, v in merged.items():

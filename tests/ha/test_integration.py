@@ -1129,3 +1129,26 @@ async def test_history_is_learned_from_the_meters_own_data(hass: HomeAssistant):
     hass.states.async_set(PREV, "9", {"unit_of_measurement": "kWh", "charges": _charges([(base, 0.77)])})
     c._refresh_official()
     assert c.hh_history[base.isoformat()] == pytest.approx(0.77)                                    # the corrected value replaces the old
+
+
+async def test_official_half_hours_survive_a_restart_and_diagnostics_say_why_it_is_empty(hass: HomeAssistant):
+    from custom_components.energy_twin.coordinator import TwinCoordinator
+    entry = await _octopus_setup(hass)
+    c = entry.runtime_data
+    now = dt_util.utcnow()
+    cur = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
+    s1 = cur - timedelta(minutes=60)
+    hass.states.async_set(TODAY, "0.4", {"unit_of_measurement": "kWh", "charges": _charges([(s1, 0.4)])})
+    c._refresh_official()
+    assert c._oct_diag["today_half_hours_read"] == 1 and "hint" not in c._oct_diag
+    await c._store.async_save({"hh": c.hh_history, "slots": {"raw": c.slot_raw, "applied": c.slot_applied}})
+    # a restart: the Octopus sensors are empty at first, but what we already knew is still in use
+    hass.states.async_set(TODAY, "unavailable", {})
+    hass.states.async_set(PREV, "unknown", {})
+    fresh = TwinCoordinator(hass, entry)
+    await fresh.async_setup()
+    assert fresh.official.get(s1) == pytest.approx(0.4)
+    fresh._refresh_official()
+    assert fresh.official.get(s1) == pytest.approx(0.4)                    # an empty read does not wipe it
+    d = fresh._oct_diag
+    assert d["today_half_hours_read"] == 0 and d["today_sensor_state"] == "unavailable" and "hint" in d
