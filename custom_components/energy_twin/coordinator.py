@@ -42,7 +42,7 @@ def _mins(v: str | int) -> int:
 
 def _blank_bucket() -> dict:
     return {"actual_p": 0.0, "twin_p": 0.0, "pv_kwh": 0.0, "export_kwh": 0.0, "grid_charge_kwh": 0.0,
-            "discharge_kwh": 0.0, "load_kwh": 0.0, "gas_p": 0.0, "hp_kwh": 0.0}
+            "discharge_kwh": 0.0, "load_kwh": 0.0, "gas_p": 0.0, "hp_kwh": 0.0, "import_kwh": 0.0}
 
 
 @dataclass
@@ -81,11 +81,12 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self._internal_update = False
         self._annual_lock = asyncio.Lock()
         self._live: dict = {}
-        self.learn_live: dict[str, evm.VehicleLearn] = {}      # sessions/plug-ins observed by this twin
-        self.learn_hist: dict[str, evm.VehicleLearn] = {}      # mined from recorder statistics
         self.veh_rt: dict[str, dict] = {}                      # per-car session tracking
         self.ev_info: dict = {}
         self.gas_model = heatm.default_gas_model(heatm.HeatParams())
+        self._rate_cache: dict[str, dict] = {"imp": {}, "exp": {}}   # last good Octopus rates, so a blank update can't reset prices
+        self._rates_parsed = {"imp": 0, "exp": 0}
+        self.learned_rates: dict[str, float] = {}                    # real cheap / standard / export p/kWh seen in those rates
         self.tank_kwh: float | None = None
         self.hp_plan: heatm.HeatResult | None = None
         self._last_idx: int | None = None
@@ -128,10 +129,6 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             hit = cache[device_id] = (time.monotonic(), ha_data.discover_vehicle_entities(self.hass, device_id))
         return hit[1]
 
-    def learn_for(self, name: str) -> evm.VehicleLearn:
-        return evm.VehicleLearn.combine(self.learn_hist.get(name, evm.VehicleLearn()),
-                                        self.learn_live.get(name, evm.VehicleLearn()))
-
     def vehicle_info(self, v: evm.Vehicle) -> evm.VehicleInfo:
         plug, home = self._state(v.plug_entity), self._state(v.home_entity)
         soc = ha_data.to_float(self._state(v.soc_entity))
@@ -145,27 +142,17 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             raw_plug=plug.state if plug else None, raw_home=home.state if home else None)
 
     def _track_vehicles(self, now: datetime, h: float) -> None:
-        """Learn only around real sessions: energy delivered while a car draws power, plug-in days."""
-        today = now.astimezone(self.tz).date()
+        """Energy delivered in the current charge session (for a car with no battery-level entity). Nothing is
+        learned: a session ends when the car stops drawing power for 3 hours or is unplugged."""
         for v in self.vehicles:
-            rt = self.veh_rt.setdefault(v.name, {"delivered": 0.0, "last": None, "day": today.isoformat(),
-                                                 "plugged_today": False})
-            lrn = self.learn_live.setdefault(v.name, evm.VehicleLearn())
+            rt = self.veh_rt.setdefault(v.name, {"delivered": 0.0, "last": None})
             info = self.vehicle_info(v)
-            if rt["day"] != today.isoformat():                       # day rolled: record yesterday's plug-in
-                y = date.fromisoformat(rt["day"])
-                lrn.note_day(y.weekday(), rt["plugged_today"])
-                rt["day"], rt["plugged_today"] = today.isoformat(), False
-            if info.plugged and info.home is not False:
-                rt["plugged_today"] = True
             if info.live_kw >= 0.3 and h > 0:
                 rt["delivered"] += info.live_kw * h
                 rt["last"] = now.isoformat()
-                rt["plugged_today"] = True
             last = dt_util.parse_datetime(rt["last"]) if rt.get("last") else None
             idle = last is not None and (now - last) > timedelta(hours=3)
-            if rt["delivered"] > 0 and (idle or info.plugged is False):    # session over
-                lrn.end_session(rt["delivered"])
+            if rt["delivered"] > 0 and (idle or info.plugged is False):
                 rt["delivered"], rt["last"] = 0.0, None
 
     # ------------------------------------------------------------------ config accessors
@@ -246,9 +233,9 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         saved_soc = saved.get("soc")
         self.soc = self.start_soc(hw) if saved_soc is None else min(max(float(saved_soc), hw.emin), hw.emax)
         self.acc = {**self.acc, **saved.get("acc", {})}
-        self.learn_live = {k: evm.VehicleLearn.from_dict(v) for k, v in (saved.get("learn") or {}).items()}
         self.veh_rt = saved.get("veh_rt") or {}
         self.tank_kwh = saved.get("tank_kwh")
+        self.learned_rates = {k: float(v) for k, v in (saved.get("learned_rates") or {}).items()}
         for e in saved.get("events", []):
             try:
                 ev = GridEvent(e["kind"], dt_util.parse_datetime(e["start"]), dt_util.parse_datetime(e["end"]),
@@ -263,8 +250,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
     def _save(self) -> None:
         self._store.async_delay_save(lambda: {
             "soc": self.soc, "last": self.last_tick.isoformat() if self.last_tick else None, "acc": self.acc,
-            "learn": {k: v.to_dict() for k, v in self.learn_live.items()}, "veh_rt": self.veh_rt,
-            "tank_kwh": self.tank_kwh,
+            "veh_rt": self.veh_rt,
+            "tank_kwh": self.tank_kwh, "learned_rates": self.learned_rates,
             "events": [{"kind": e.kind, "start": e.start.isoformat(), "end": e.end.isoformat(), "import_p": e.import_p,
                         "export_p": e.export_p, "bonus_p": e.bonus_p} for e in self.manual_events]}, 30)
 
@@ -365,8 +352,11 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
                 if crossings == 2:
                     break
         tod = tod_minutes(starts, self.tz)
-        imp_rates = ha_data.parse_rates(self._states(c.get(CONF_IMPORT_RATES_ENTITIES))) or None
-        exp_rates = ha_data.parse_rates(self._states(c.get(CONF_EXPORT_RATES_ENTITIES))) or None
+        imp_rates = self._rates("imp", c.get(CONF_IMPORT_RATES_ENTITIES), now)
+        exp_rates = self._rates("exp", c.get(CONF_EXPORT_RATES_ENTITIES), now)
+        self._learn_rates(tariff)
+        # for any slot the rate lists don't cover, prefer what Octopus actually charges you over the placeholders
+        tariff = replace(tariff, **{k: v for k, v in self.learned_rates.items() if k in ("cheap_p", "standard_p", "export_p")})
         dispatches = ha_data.parse_dispatches(self._state(c.get(CONF_DISPATCH_ENTITY)), now)
         events = self._all_events(now)
         imp, exp, cheap, ev_flag, bonus = build_prices(starts, tod, tariff, import_rates=imp_rates,
@@ -419,8 +409,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         if vehicles:
             # per-car model: charge what is plugged in / dispatched; only probabilities for cars that aren't
             infos = {v.name: self.vehicle_info(v) for v in vehicles}
-            evk, self.ev_info = evm.build_ev_load(starts, tod, self.tz, tariff, vehicles, infos,
-                                                  {v.name: self.learn_for(v.name) for v in vehicles}, disp_slots)
+            evk, self.ev_info = evm.build_ev_load(starts, tod, self.tz, tariff, vehicles, infos, disp_slots)
             for note, v in zip(self.ev_info, vehicles):
                 note["entities"] = {role: ent for role, ent in (
                     ("power", v.power_entity), ("plug", v.plug_entity), ("home", v.home_entity), ("battery", v.soc_entity),
@@ -442,7 +431,12 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         hw_soc = self.soc if self.soc is not None else self.start_soc(hw)
         res = await self.hass.async_add_executor_job(plan_horizon, sl, hw, st, hw_soc)
         self.diag = {
-            "import_rate_slots": len(imp_rates or {}), "export_rate_slots": len(exp_rates or {}),
+            "import_rate_slots": self._rates_parsed["imp"], "export_rate_slots": self._rates_parsed["exp"],
+            "rates_learned_p_per_kwh": dict(self.learned_rates) or "not yet",
+            **({"import_rates_hint": "No Octopus rate list is being read, so prices for later half-hours come from the rates "
+                                     "learned from your live price sensor (or the placeholders). Under Configure > Data sources "
+                                     "> Octopus, pick the rate entities that have a 'rates' attribute (current + next day)."}
+               if self._rates_parsed["imp"] == 0 else {}),
             "dispatches": len(dispatches), "events_active_or_upcoming": len(events),
             "forecast_slots_used": from_fc, "forecast_slots_total": len(starts),
             "load_profile": f"{self.profile.source} ({self.profile.days} days)",
@@ -459,6 +453,38 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "fuse_limit_kw": round(hw.import_limit_kw, 1),
         }
         return Plan(sl, res, now, hw_soc)
+
+    def _rates(self, kind: str, entity_ids, now: datetime) -> dict[datetime, float] | None:
+        """Octopus rates, remembering the last good lists: an update that briefly shows no 'rates' must not make
+        the plan fall back to placeholder prices (that made the import price flick between real and placeholder)."""
+        cache = self._rate_cache[kind]
+        parsed = ha_data.parse_rates(self._states(entity_ids))
+        self._rates_parsed[kind] = len(parsed)
+        cache.update(parsed)
+        for k in [k for k in cache if k < now - timedelta(days=1)]:
+            del cache[k]
+        return cache or None
+
+    def _learn_rates(self, tariff: TariffConfig) -> None:
+        """Your real standard / cheap import rates and export rate, taken from the rate lists (medians)."""
+        imp = self._rate_cache["imp"]
+        cheap, std = [], []
+        for t_, p_ in imp.items():
+            loc = t_.astimezone(self.tz)
+            (cheap if tariff.in_cheap_window(loc.hour * 60 + loc.minute) else std).append(p_)
+        med = lambda xs: sorted(xs)[len(xs) // 2]  # noqa: E731
+        if len(cheap) >= 2:
+            self.learned_rates["cheap_p"] = round(med(cheap), 3)
+        if len(std) >= 2:
+            self.learned_rates["standard_p"] = round(med(std), 3)
+        if len(self._rate_cache["exp"]) >= 2:
+            self.learned_rates["export_p"] = round(med(list(self._rate_cache["exp"].values())), 3)
+
+    async def async_use_live_rates(self) -> None:
+        """Copy the rates learned from Octopus into the tariff settings (the annual what-if uses those numbers)."""
+        upd = {k: v for k, v in self.learned_rates.items() if k in (CONF_CHEAP_P, CONF_STANDARD_P, CONF_EXPORT_P)}
+        if upd:
+            await self.async_set_options(upd)
 
     _temps_source = "synthetic"
     _fc_diag: dict = {}
@@ -573,6 +599,19 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
                              max_charge=charge_headroom(hw, house + ev - pv))
         grid = house + ev - pv + r
         imp_p, exp_p, bonus = sl.import_p[idx], sl.export_p[idx], sl.bonus_p[idx]
+        # the price "right now" is what your live price sensors say, not whatever the plan guessed for this slot
+        if not sl.event[idx]:
+            live_i = ha_data.price_p(self._state(c.get(CONF_IMPORT_NOW_ENTITY)))
+            live_x = ha_data.price_p(self._state(c.get(CONF_EXPORT_NOW_ENTITY)))
+            imp_p = live_i if live_i is not None else imp_p
+            exp_p = live_x if live_x is not None else exp_p
+            slot_in_window = self.tariff(c).in_cheap_window(sl.tod_min[idx])
+            if sl.cheap[idx] == slot_in_window:                    # skip smart-charge slots: they aren't the normal rate
+                slot = floor_half_hour(now)
+                if live_i is not None:
+                    self._rate_cache["imp"][slot] = live_i
+                if live_x is not None:
+                    self._rate_cache["exp"][slot] = live_x
         cost_p, exp_kw = _slot_cost(hw, grid, r, imp_p, exp_p, bonus)
         hp_p = self.heat_params(c)
         gas_kw = self.hp_plan.gas_kw[idx] if (hp_p.enabled and self.hp_plan) else 0.0
@@ -587,6 +626,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
                 b["twin_p"] += cost_p / SLOT_H * h
                 b["pv_kwh"] += pv * h
                 b["export_kwh"] += exp_kw * h
+                b["import_kwh"] = b.get("import_kwh", 0.0) + max(grid, 0.0) * h
                 b["load_kwh"] += (real_house + ev) * h
                 b["hp_kwh"] = b.get("hp_kwh", 0.0) + new * h
                 b["gas_p"] = b.get("gas_p", 0.0) + (gas_kw * hp_p.gas_unit_p
@@ -601,7 +641,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self._live = {"hp_kw": hpr.hp_kw[idx] if hpr else 0.0, "induction_kw": hpr.induction_kw[idx] if hpr else 0.0,
                       "tank_kwh": hpr.tank_end[idx] if hpr else None, "cop_space": hpr.cop_space[idx] if hpr else None,
                       "cop_dhw": hpr.cop_dhw[idx] if hpr else None, "tank_charging": bool(hpr and hpr.charging[idx]),
-                      "house": real_house, "ev": ev, "pv": pv, "battery": r, "grid": grid, "export": exp_kw,
+                      "house": real_house, "ev": ev, "total": real_house + ev, "pv": pv, "battery": r, "grid": grid,
+                      "import": max(grid, 0.0), "export": exp_kw,
                       "import_p": imp_p, "export_p": exp_p, "mode": mode, "idx": idx, "soc_before": soc_before}
         return self._live
 
@@ -714,8 +755,6 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         rows = await ha_data.cached(self.hass, ("hist", tuple(ids), days), 3600,
                                     lambda: ha_data.history_hourly(self.hass, ids, days))
         total = rows.get(stat) if stat else None
-        self.learn_hist = {n: evm.learn_from_rows(rows.get(sid, []), self.tz) for n, sid in veh_stats.items()
-                           if rows.get(sid)}
         ev_rows = None
         if ev_ids:
             merged: dict[datetime, float] = {}
@@ -726,6 +765,10 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         prof, hh, he, days, last = await self.hass.async_add_executor_job(
             pipeline.build_profile, total, ev_rows, self.tz, self.tariff(c), c[CONF_NIGHT_BASE],
             c[CONF_DAILY_HOUSE], c[CONF_DAILY_EV])
+        if self.vehicles and prof.source == "history":
+            # cars are planned from their live state, so the yearly what-if uses your stated EV assumption, not
+            # charging patterns mined from history (history is only used to take the cars OUT of the house load)
+            prof.ev = load.default_profile(c[CONF_DAILY_HOUSE], c[CONF_DAILY_EV], self.tariff(c)).ev
         self.profile, self.hist = prof, (hh, he, days, last)
         await self._async_calibrate_gas()
         self.plan_dirty = True
@@ -760,7 +803,6 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         return pipeline.make_year(
             prof, hh, he, days, last, hw=hw, tariff=tariff, tz=self.tz, lat=self.hass.config.latitude,
             lon=self.hass.config.longitude, today=dt_util.now().date(),
-            vehicles=self.vehicles or None, learns={v.name: self.learn_for(v.name) for v in self.vehicles},
             heat=(self.heat_params(c), self.gas_model) if c[CONF_HP_ENABLED] else None,
             pd=(c[CONF_PD_PER_MONTH], c[CONF_PD_START_HOUR], c[CONF_PD_HOURS]),
             pu=(c[CONF_PU_PER_MONTH], c[CONF_PU_START_HOUR], c[CONF_PU_HOURS]))

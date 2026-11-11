@@ -221,16 +221,18 @@ async def test_vehicles_drive_the_ev_plan(hass: HomeAssistant):
     entry = await _setup(hass, vehicles=vehicles)
     c = entry.runtime_data
     info = {n["vehicle"]: n for n in c.ev_info}
-    assert info["Tesla"]["plugged"] is True and info["Tesla"]["home"] is True and info["Tesla"]["probability"] == 1.0
+    assert info["Tesla"]["plugged"] is True and info["Tesla"]["home"] is True
+    assert info["Tesla"]["planned_kwh"] == info["Tesla"]["needed_kwh"] > 20
     assert info["Tesla"]["needed_kwh"] == round(24 / 0.9, 1)
-    assert info["Leaf"]["plugged"] is False and info["Leaf"]["home"] is False and info["Leaf"]["probability"] == 0.5
+    assert info["Leaf"]["plugged"] is False and info["Leaf"]["home"] is False
+    assert info["Leaf"]["planned_kwh"] == 0 and "not plugged in at home" in info["Leaf"]["why"]     # no guess about tonight
     st = hass.states.get("sensor.home_energy_twin_ev_charging_expected_tonight")
     assert float(st.state) > 20 and len(st.attributes["vehicles"]) == 2
     assert any(x >= 6.9 for x in c.plan.slots.exp_ev_kw)            # the plugged-in car charges at full rate
-    # a car that is plugged in later changes the plan: unplug the Tesla -> its load becomes only a probability
+    # unplug the Tesla -> nothing is planned for it (no statistical "maybe")
     hass.states.async_set("binary_sensor.tesla_plug", "off")
     await c.async_recalculate()
-    assert {n["vehicle"]: n for n in c.ev_info}["Tesla"]["probability"] == 0.5
+    assert {n["vehicle"]: n for n in c.ev_info}["Tesla"]["planned_kwh"] == 0
 
 
 async def test_vehicle_options_flow(hass: HomeAssistant):
@@ -251,25 +253,48 @@ async def test_vehicle_options_flow(hass: HomeAssistant):
     assert v[0]["name"] == "Kia" and v[0]["plug_states"] == "ready, charging"
 
 
-async def test_sessions_are_learned_only_when_a_car_actually_charges(hass: HomeAssistant):
+async def test_session_energy_is_tracked_but_nothing_is_learned(hass: HomeAssistant):
     hass.states.async_set("sensor.car_power", "7000", {"unit_of_measurement": "W"})
     hass.states.async_set("binary_sensor.car_plug", "on")
     entry = await _setup(hass, vehicles=[{"name": "Car", "mode": "offpeak", "power_entity": "sensor.car_power",
                                           "plug_entity": "binary_sensor.car_plug", "session_kwh": 0, "charger_kw": 7}])
     c = entry.runtime_data
+    assert not hasattr(c, "learn_live") and not hasattr(c, "learn_hist")          # no statistical car model at all
     t = dt_util.utcnow()
-    for k in range(60):                                       # one hour at 7 kW = 7 kWh
+    for k in range(60):                                       # one hour at 7 kW = 7 kWh delivered this session
         c._track_vehicles(t + timedelta(minutes=k), 1 / 60)
     assert c.veh_rt["Car"]["delivered"] == pytest.approx(7.0, abs=0.2)
-    assert not c.learn_live["Car"].sessions                   # still in progress
     hass.states.async_set("sensor.car_power", "0", {"unit_of_measurement": "W"})
-    c._track_vehicles(t + timedelta(hours=5), 0.0)             # idle for > 3 h: session over
-    assert c.learn_live["Car"].sessions == [pytest.approx(7.0, abs=0.2)]
-    # a day with the car never plugged in is recorded too (it lowers that weekday's probability)
-    hass.states.async_set("binary_sensor.car_plug", "off")
-    c._track_vehicles(t + timedelta(days=1, hours=5), 0.0)
-    assert sum(c.learn_live["Car"].wd_seen) >= 1
+    c._track_vehicles(t + timedelta(hours=5), 0.0)             # idle for > 3 h: the session is over, energy cleared
+    assert c.veh_rt["Car"]["delivered"] == 0.0
+    # for a car with a session size but no battery level, what has gone in this session is taken off what's left
+    entry2 = await _setup(hass, title="Two", vehicles=[{"name": "Car2", "mode": "offpeak", "plug_entity": "binary_sensor.car_plug",
+                                                        "session_kwh": 12, "charger_kw": 7}])
+    c2 = entry2.runtime_data
+    c2.veh_rt["Car2"] = {"delivered": 5.0, "last": None}
+    c2.plan_dirty = True
+    await c2.async_refresh()
+    assert c2.ev_info[0]["needed_kwh"] == pytest.approx(7.0)
 
+
+async def test_plugging_a_car_in_replans_immediately(hass: HomeAssistant):
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+    hass.states.async_set("binary_sensor.car_plug", "off")
+    hass.states.async_set("device_tracker.car", "home")
+    hass.states.async_set("sensor.car_soc", "30", {"unit_of_measurement": "%"})
+    entry = await _setup(hass, vehicles=[{"name": "Car", "mode": "offpeak", "plug_entity": "binary_sensor.car_plug",
+                                          "home_entity": "device_tracker.car", "soc_entity": "sensor.car_soc",
+                                          "capacity_kwh": 60, "target_soc_pct": 80}])
+    c = entry.runtime_data
+    assert c.ev_info[0]["planned_kwh"] == 0 and sum(c.plan.slots.exp_ev_kw) == 0                # unplugged: nothing planned
+    hass.states.async_set("binary_sensor.car_plug", "on")                                       # plugged in at 30 %
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=15))
+    await hass.async_block_till_done()
+    assert c.ev_info[0]["planned_kwh"] == pytest.approx(50 / 100 * 60 / 0.9, abs=0.1) and sum(c.plan.slots.exp_ev_kw) > 0
+    hass.states.async_set("sensor.car_soc", "80", {"unit_of_measurement": "%"})                 # it reaches its limit
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=40))
+    await hass.async_block_till_done()
+    assert c.ev_info[0]["planned_kwh"] == 0 and sum(c.plan.slots.exp_ev_kw) == 0               # left plugged in: nothing to charge
 
 async def test_dashboard_vehicle_card_renders(hass: HomeAssistant):
     import pathlib, yaml
@@ -491,10 +516,10 @@ async def test_two_teslas_from_their_devices(hass: HomeAssistant):
     assert vb.plug_entity == ib["state"]                                           # ...charging-state enum when there is none
     info = {n["vehicle"]: n for n in c.ev_info}
     ya, yb = info["Tesla Model Y"], info["Tesla Model 3"]
-    assert ya["plugged"] is True and ya["home"] is True and ya["probability"] == 1.0
+    assert ya["plugged"] is True and ya["home"] is True and ya["planned_kwh"] == ya["needed_kwh"] > 0
     assert ya["target_soc_pct"] == 90.0                                           # the car's own charge limit, not the fixed 80
     assert ya["needed_kwh"] == round((90 - 40) / 100 * 75 / 0.9, 1)
-    assert yb["plugged"] is False and yb["home"] is False and yb["probability"] == 0.5
+    assert yb["plugged"] is False and yb["home"] is False and yb["planned_kwh"] == 0
     assert set(ya["entities"]) >= {"power", "plug", "home", "battery", "charge limit", "energy"}
 
 
@@ -801,3 +826,108 @@ async def test_renamed_setup_keeps_the_dashboard_entity_ids(hass: HomeAssistant)
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert reg.async_get("sensor.my_grid_power") is not None and reg.async_get("sensor.home_energy_twin_grid_power") is None
+
+
+async def test_grid_import_export_and_balance_card(hass: HomeAssistant):
+    import pathlib, yaml
+    from homeassistant.helpers.template import Template
+    entry = await _setup(hass, strategy="optimised", pv_now_entity=None, forecast_ref_kwp=5.0)
+    c = entry.runtime_data
+    hw = c.hardware()
+    t = dt_util.utcnow()
+    idx = c._plan_index(t)
+    sl, res = c.plan.slots, c.plan.result
+    hass.states.async_set("sensor.mini", "400", {"unit_of_measurement": "W"})
+    sl.cheap[idx], sl.tod_min[idx] = False, 6 * 60
+    card = next(x for v in yaml.safe_load(pathlib.Path("dashboard/energy_twin_dashboard.yaml").read_text())["views"]
+                if v["path"] == "live" for x in v["cards"] if x.get("title") == "Right now - how the numbers add up")
+
+    async def case(soc, pv_unit, r_plan):
+        sl.pv_unit[idx] = pv_unit
+        c.soc, res.battery_kw[idx] = soc, r_plan
+        c.last_tick = t - timedelta(seconds=60)
+        hass.states.async_set("sensor.mini", "400", {"unit_of_measurement": "W"})
+        c.async_set_updated_data(c._snapshot(t, hw, c._step(t, hw, idx)))
+        await hass.async_block_till_done()
+        g = lambda k: float(hass.states.get(f"sensor.home_energy_twin_{k}").state)  # noqa: E731
+        return {k: g(k) for k in ("home_load_meter", "solar_power", "battery_power", "grid_import", "grid_export", "grid_power")}
+
+    # 1) dawn, battery at the reserve (can't help): you import exactly what you use
+    a = await case(hw.emin, 0.0, 0.0)
+    assert a["grid_import"] == pytest.approx(a["home_load_meter"]) and a["grid_export"] == 0
+    # 2) dawn, battery 50% and no sun: the virtual battery runs the house, so import is 0 - by design
+    b = await case(0.5 * hw.emax, 0.0, 0.0)
+    assert b["grid_import"] == 0 and b["battery_power"] == pytest.approx(-b["home_load_meter"])
+    # 3) sunny, battery full: surplus solar is exported, import is 0
+    d = await case(hw.emax, 1.0, 0.0)
+    assert d["grid_import"] == 0 and d["grid_export"] > 0.5
+    # the identity behind the card: net grid = load - solar + battery, and import/export are its two halves
+    for x in (a, b, d):
+        net = x["home_load_meter"] - x["solar_power"] + x["battery_power"]
+        assert x["grid_power"] == pytest.approx(net, abs=0.01)
+        assert x["grid_import"] == pytest.approx(max(net, 0), abs=0.01)
+        assert x["grid_export"] == pytest.approx(min(max(-net, 0), hw.export_limit_kw), abs=0.01)   # export is capped (G98)
+    out = Template(card["content"], hass).async_render()
+    assert "Grid with the kit" in out and "Importing" in out and "Exporting" in out
+    assert hass.states.get("sensor.home_energy_twin_imported_today") is not None
+
+
+async def test_import_price_does_not_flick_to_placeholders(hass: HomeAssistant):
+    """Regression: a blank Octopus 'rates' update made the plan fall back to the placeholder 27p/7p for a cycle."""
+    entry = await _setup(hass, strategy="rules", import_now_entity=None)
+    c = entry.runtime_data
+    real = _rates(None, cheap_p=0.0669, std_p=0.36294)                        # your real IOG rates: 6.69p / 36.294p
+    hass.states.async_set("event.rates", "x", {"rates": real})
+    c.plan_dirty = True
+    await c.async_refresh()
+    assert c.learned_rates["standard_p"] == pytest.approx(36.294) and c.learned_rates["cheap_p"] == pytest.approx(6.69)
+    day = [i for i, s in enumerate(c.plan.slots.start) if not c.plan.slots.cheap[i]]
+    assert day and all(c.plan.slots.import_p[i] == pytest.approx(36.294) for i in day)
+    prices = []
+    for attrs in ({}, {"rates": []}, {"rates": real}, {}, {"rates": real}):      # the entity flickers between plans
+        hass.states.async_set("event.rates", "x", attrs)
+        c.plan_dirty = True
+        await c.async_refresh()
+        prices.append(float(hass.states.get("sensor.home_energy_twin_import_price").state))
+    assert len(set(prices)) == 1, prices                                         # one price throughout - no 27p / 7p blips
+    assert all(c.plan.slots.import_p[i] == pytest.approx(36.294) for i in day)
+    # slots the lists never covered use YOUR rates, not the placeholders
+    assert max(c.plan.slots.import_p) == pytest.approx(36.294) and min(c.plan.slots.import_p) == pytest.approx(6.69)
+    # copy the learned rates into the settings (the annual what-if uses those numbers)
+    await hass.services.async_call("button", "press", {"entity_id": "button.home_energy_twin_use_my_live_tariff_rates"}, blocking=True)
+    assert entry.options["standard_p"] == pytest.approx(36.294) and entry.options["cheap_p"] == pytest.approx(6.69)
+
+
+async def test_price_is_the_live_sensor_reading_even_with_no_rate_lists(hass: HomeAssistant):
+    """Regression (import_rate_slots: 0): the sensor flicked to the 27p/7p placeholders whenever the clock moved on
+    to a slot the plan knew nothing about. The live price sensor now sets the price, and real rates are learned."""
+    from homeassistant.util import dt as dt_util2
+    hass.states.async_set("sensor.price_now", "36.294", {"unit_of_measurement": "p/kWh"})
+    entry = await _setup(hass, strategy="rules", import_rates_entities=[], export_rates_entities=[],
+                         import_now_entity="sensor.price_now", cheap_p=7.0, standard_p=27.0)
+    c = entry.runtime_data
+    hw = c.hardware()
+    t = dt_util.utcnow()
+    idx = c._plan_index(t)
+    sl = c.plan.slots
+    assert c.diag["import_rate_slots"] == 0 and "import_rates_hint" in c.diag
+    # step the clock through several later slots (as it does between 5-minute plan rebuilds): price never moves
+    seen = set()
+    for k in range(0, 5):
+        i = min(idx + k, sl.n - 1)
+        if sl.event[i] or sl.cheap[i]:
+            continue
+        c.last_tick = t - timedelta(seconds=60)
+        c._step(t, hw, i)
+        seen.add(round(c._live["import_p"], 3))
+    assert seen == {36.294}, seen
+    # observations feed the learned rates: two standard-rate and two cheap-rate slots are enough for a flat tariff
+    tariff = c.tariff()
+    c._rate_cache["imp"].clear()
+    base = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+    for h in (8, 9, 10, 11):                                                     # daytime, outside the 23:30-05:30 window
+        c._rate_cache["imp"][base.replace(hour=h)] = 36.294
+    for h in (1, 2, 3):                                                          # inside the window
+        c._rate_cache["imp"][base.replace(hour=h)] = 6.69
+    c._learn_rates(tariff)
+    assert c.learned_rates["standard_p"] == pytest.approx(36.294) and c.learned_rates["cheap_p"] == pytest.approx(6.69)

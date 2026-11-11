@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from . import annual, ev as evm, heat as heatm, load
+from . import annual, heat as heatm, load
 from .finance import Costs, FinanceTerms, evaluate_finance
 from .models import GridEvent, Hardware, Slots, Strategy, TariffConfig
 
@@ -60,7 +60,6 @@ def synthetic_events(start_day: date, days: int, tz: ZoneInfo, kind: str, per_mo
 
 def make_year(profile, hist_house, hist_ev, hist_days, last_hist, *, hw: Hardware, tariff: TariffConfig,
               tz: ZoneInfo, lat: float, lon: float, today: date, pd: tuple, pu: tuple,
-              vehicles: list | None = None, learns: dict | None = None,
               heat: tuple | None = None) -> Slots:
     """pd / pu = (per_month, start_hour, hours) for assumed Power Down / Power Up events."""
     if hist_house is not None and hist_days >= FULL_YEAR_DAYS and last_hist:
@@ -69,16 +68,8 @@ def make_year(profile, hist_house, hist_ev, hist_days, last_hist, *, hw: Hardwar
         start, hist_house, hist_ev = today, None, None
     events = (synthetic_events(start, 365, tz, "power_down", *pd)
               + synthetic_events(start, 365, tz, "power_up", *pu))
-    real_history = hist_house is not None
     sl = load.build_year(hw_yield=hw.pv_annual_yield, profile=profile, cfg=tariff, tz=tz, lat=lat, lon=lon,
                          start_day=start, days=365, history_house=hist_house, history_ev=hist_ev, events=events)
-    if vehicles:
-        # per-car model: the planner's expectation is probability-weighted; the "actual" year is your real
-        # EV history if you have a full year of it, otherwise a lumpy-but-deterministic charging pattern
-        act, exp = evm.year_load(sl.start, sl.tod_min, tz, tariff, vehicles, learns or {})
-        sl.exp_ev_kw = exp
-        if not real_history:
-            sl.ev_kw = act
     if heat and heat[0].enabled:
         hp, gm = heat
         act_t, exp_t = heatm.synth_temps(sl.start, tz)

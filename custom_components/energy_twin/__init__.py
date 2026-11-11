@@ -9,6 +9,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import slugify
 from homeassistant.util import dt as dt_util
 
@@ -97,8 +98,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: TwinConfigEntry) -> bool
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _normalise_entity_ids(hass, entry)
+    _replan_when_cars_change(hass, entry, coordinator)
     entry.async_on_unload(entry.add_update_listener(_options_updated))
     return True
+
+
+def _replan_when_cars_change(hass: HomeAssistant, entry: TwinConfigEntry, coordinator: TwinCoordinator) -> None:
+    """A car being plugged in / unplugged / arriving / leaving, or its battery level or charge limit changing,
+    re-plans straight away: the EV plan is built from the car's state now, not on a schedule."""
+    ids = sorted({e for v in coordinator.vehicles
+                  for e in (v.plug_entity, v.home_entity, v.soc_entity, v.target_soc_entity) if e})
+    if not ids:
+        return
+
+    async def _changed(event) -> None:
+        coordinator.plan_dirty = True
+        await coordinator.async_request_refresh()
+
+    entry.async_on_unload(async_track_state_change_event(hass, ids, _changed))
 
 
 CANONICAL_NAME = "Home Energy Twin"

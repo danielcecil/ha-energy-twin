@@ -45,12 +45,19 @@ Cars are modelled **individually**, not as an averaged nightly load. In *Configu
 * **Charge target** comes from the car's own charge-limit entity when it has one (a Tesla's charge limit),
   otherwise the fixed % you set. Battery size and charger power are set per car (the car does not report them).
 
-Each car is **IOG** (smart-charged: dispatch slots at any time of day plus the off-peak window) or **off-peak**
-(only the off-peak window, from its start) - normally one of each. A car that is plugged in at home *will* charge;
-one that isn't contributes only a learned probability for that weekday, so non-charging days no longer smear into
-the plan. Learning happens only around real sessions (energy delivered, plug-in days), plus history from each car's
-energy statistic. Integrations word their states differently, so there are optional "plugged-in states" /
-"at-home states" overrides, and Diagnostics shows per car which entities were found and what was understood.
+Each car is **IOG** (smart-charged: dispatch slots at any time of day, then the off-peak window) or **off-peak**
+(only the off-peak window, from its start) - normally one of each.
+
+**Cars are planned from their state right now - nothing is learned from statistics.** A car that is plugged in at
+home gets a plan for exactly what it still needs: its actual battery level up to its charge limit, so two cars at
+different levels each get their own plan, and the plan changes the day after when the levels have changed. A car left
+plugged in at its limit - for days, if you like - adds nothing. A car that isn't plugged in at home (or is away)
+adds nothing, with no "maybe tonight" guess; the moment it is plugged in, unplugged, arrives, leaves, or its level or
+limit changes, the plan is rebuilt from that moment. A big top-up carries on into the next off-peak window(s) until it
+is done. For a car that reports no battery level: while it is drawing power the twin assumes it keeps going through
+the off-peak window; or enter an *Energy per charge* and what has already gone in this session is taken off.
+The yearly what-if has no live state to go on, so it uses your *Typical EV charging (kWh/day)* assumption.
+Diagnostics shows, per car, what was found, what was understood, how much it needs, what is planned and why.
 
 ## Heat pump, induction hob and the main fuse
 

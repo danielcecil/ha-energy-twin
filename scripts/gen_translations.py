@@ -119,8 +119,8 @@ VF = {  # vehicle form fields
     "soc_entity": ("Battery level entity (%) - override", "Optional. With it the twin knows exactly how much the car still needs."),
     "capacity_kwh": ("Battery size (kWh)", ""), "target_soc_pct": ("Charge target (%)", ""),
     "charger_kw": ("Charger power (kW)", ""),
-    "session_kwh": ("Typical energy per charge (kWh)", "0 = learn it from observed sessions. Used when the car has no battery-level entity."),
-    "energy_stat": ("Charging energy sensor (kWh) - override", "Optional. Found automatically for a Tesla. Its history lets the twin learn this car's pattern straight away."),
+    "session_kwh": ("Energy per charge (kWh) - only without a battery level", "Only used for a car that reports no battery level: how much it takes per charge. With a battery-level entity the car's own level and charge limit decide, so leave this at 0."),
+    "energy_stat": ("Charging energy sensor (kWh) - override", "Optional. Found automatically for a Tesla. Only used to take this car's charging out of your house-load history - nothing about the car's habits is learned."),
     "plug_states": ("Plugged-in states (override)", "Only if your integration uses unusual wording. Comma-separated, e.g. 'ready,charging'. Blank = auto-detect."),
     "home_states": ("At-home states (override)", "Comma-separated, e.g. 'home,garage'. Blank = auto-detect."),
 }
@@ -147,7 +147,7 @@ def vsteps():
 
 ENT = {
  "sensor": {"soc": "Battery state of charge", "stored_energy": "Battery stored energy", "battery_power": "Battery power",
-   "grid_power": "Grid power", "solar_power": "Solar power", "house_load": "House load", "mode": "Twin mode",
+   "grid_power": "Grid power", "grid_import": "Grid import", "grid_export": "Grid export", "home_load": "Home load (meter)", "import_today": "Imported today", "solar_power": "Solar power", "house_load": "House load", "mode": "Twin mode",
    "import_price": "Import price", "export_price": "Export price", "saving_today": "Saving today",
    "saving_month": "Saving this month", "saving_total": "Saving total", "cost_today_actual": "Cost today (actual)",
    "cost_today_twin": "Cost today (twin)", "solar_today": "Solar generated today", "export_today": "Exported today",
@@ -166,7 +166,7 @@ ENT = {
  "select": {"strategy": "Strategy", "hardware_preset": "Hardware preset", "event_kind": "Event type", "finance_mode": "How you pay"},
  "datetime": {"event_start": "Event start", "event_end": "Event end"},
  "switch": {"arbitrage": "Grid-to-export arbitrage", "allow_battery_export": "Allow battery export", "hp_enabled": "Model heat pump + induction", "gas_disconnect": "Disconnect gas"},
- "button": {"recalculate": "Recalculate annual what-if", "run_sweep": "Run size sweep", "reset_twin": "Reset virtual battery", "add_event": "Add event", "clear_events": "Clear manual events"},
+ "button": {"recalculate": "Recalculate annual what-if", "run_sweep": "Run size sweep", "reset_twin": "Reset virtual battery", "add_event": "Add event", "clear_events": "Clear manual events", "use_live_rates": "Use my live tariff rates"},
 }
 doc = {
   "config": {"step": steps(["user", "hardware_preset", "hardware", "tariff_preset", "sources_live", "sources_octopus", "sources_solar_history"]),

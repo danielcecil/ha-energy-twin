@@ -338,7 +338,8 @@ views:
     cards:
       - type: markdown
         content: |
-          ## Virtual battery: **{{ states('sensor.home_energy_twin_twin_mode') }}**
+          {%- macro ent(sfx) -%}{%- set m = integration_entities('energy_twin') | select('match', 'sensor\\..*_' ~ sfx ~ '$') | list -%}{%- set c = 'sensor.home_energy_twin_' ~ sfx -%}{{ c if c in m else (m[0] if m else c) }}{%- endmacro -%}
+          ## Virtual battery: **{{ states(ent('twin_mode')) }}**
 
           This is a *simulation* of the kit you configured, stepped against your real
           Home Mini load. Nothing here controls real hardware.
@@ -362,14 +363,37 @@ views:
         entities:
           - {entity: number.home_energy_twin_set_battery_level, name: Set level (%)}
           - {entity: button.home_energy_twin_reset_virtual_battery, name: Reset to starting level}
+      - type: markdown
+        title: Right now - how the numbers add up
+        content: |
+          {%- macro ent(sfx) -%}{%- set m = integration_entities('energy_twin') | select('match', 'sensor\\..*_' ~ sfx ~ '$') | list -%}{%- set c = 'sensor.home_energy_twin_' ~ sfx -%}{{ c if c in m else (m[0] if m else c) }}{%- endmacro -%}
+          {% set load = states(ent('home_load_meter')) | float(0) %}
+          {% set sol = states(ent('solar_power')) | float(0) %}
+          {% set bat = states(ent('battery_power')) | float(0) %}
+          {% set imp = states(ent('grid_import')) | float(0) %}
+          {% set exp = states(ent('grid_export')) | float(0) %}
+          | | kW |
+          |---|--:|
+          | **Your home, from the real meter** (house {{ state_attr(ent('home_load_meter'), 'house_kw') }} + car {{ state_attr(ent('home_load_meter'), 'car_kw') }}) | **{{ load }}** |
+          | − Solar (modelled) | {{ sol }} |
+          | {{ '+ Battery charging' if bat >= 0 else '− Battery discharging' }} | {{ bat | abs }} |
+          | **= Grid with the kit** | **{{ ((load - sol + bat) | round(2)) }}** |
+          | → Importing | {{ imp }} |
+          | → Exporting | {{ exp }} |
+
+          {{ states(ent('twin_mode')) }}.
+          Grid import is **0 whenever the virtual battery or solar covers your load** - e.g. after the overnight charge
+          the battery runs the house until its usable energy is used. The first row is what you really draw today.
       - type: grid
         columns: 3
         square: false
         cards:
-          - {type: tile, entity: sensor.home_energy_twin_house_load, name: House}
+          - {type: tile, entity: sensor.home_energy_twin_home_load_meter, name: Home load (real)}
           - {type: tile, entity: sensor.home_energy_twin_solar_power, name: Solar (modelled)}
           - {type: tile, entity: sensor.home_energy_twin_battery_power, name: Battery (+charge)}
-          - {type: tile, entity: sensor.home_energy_twin_grid_power, name: Grid (+import)}
+          - {type: tile, entity: sensor.home_energy_twin_grid_import, name: Grid import}
+          - {type: tile, entity: sensor.home_energy_twin_grid_export, name: Grid export}
+          - {type: tile, entity: sensor.home_energy_twin_grid_power, name: Grid net (+import)}
           - {type: tile, entity: sensor.home_energy_twin_import_price, name: Import price}
           - {type: tile, entity: sensor.home_energy_twin_export_price, name: Export price}
           - {type: tile, entity: sensor.home_energy_twin_main_fuse_usage_plan_peak, name: Fuse used (plan peak)}
@@ -382,6 +406,7 @@ views:
           - {entity: sensor.home_energy_twin_cost_today_actual, name: Today's real bill}
           - {entity: sensor.home_energy_twin_cost_today_twin, name: Today's bill with kit}
           - {entity: sensor.home_energy_twin_solar_generated_today, name: Solar generated today}
+          - {entity: sensor.home_energy_twin_imported_today, name: Imported today (with the kit)}
           - {entity: sensor.home_energy_twin_exported_today, name: Exported today}
       - type: custom:apexcharts-card
         header:
@@ -507,28 +532,29 @@ views:
       - type: markdown
         title: Cash vs finance
         content: |
-          {% set s = 'sensor.home_energy_twin_' %}
+          {%- macro ent(sfx) -%}{%- set m = integration_entities('energy_twin') | select('match', 'sensor\\..*_' ~ sfx ~ '$') | list -%}{%- set c = 'sensor.home_energy_twin_' ~ sfx -%}{{ c if c in m else (m[0] if m else c) }}{%- endmacro -%}
           | | |
           |---|---|
-          | Outlay | £{{ states(s ~ 'outlay') }} |
-          | Saving in year 1 | £{{ states(s ~ 'annual_saving') }} |
-          | Finance payment | £{{ states(s ~ 'monthly_finance_payment') }} / month |
-          {%- if state_attr(s ~ 'annual_saving', 'effective_apr_pct') is not none %}
-          | Interest rate you are really paying | {{ state_attr(s ~ 'annual_saving', 'effective_apr_pct') }}% |
-          | Total cost of finance (interest + fees) | £{{ state_attr(s ~ 'annual_saving', 'cost_of_finance') }} |
+          | Outlay | £{{ states(ent('outlay')) }} |
+          | Saving in year 1 | £{{ states(ent('annual_saving')) }} |
+          | Finance payment | £{{ states(ent('monthly_finance_payment')) }} / month |
+          {%- if state_attr(ent('annual_saving'), 'effective_apr_pct') is not none %}
+          | Interest rate you are really paying | {{ state_attr(ent('annual_saving'), 'effective_apr_pct') }}% |
+          | Total cost of finance (interest + fees) | £{{ state_attr(ent('annual_saving'), 'cost_of_finance') }} |
           {%- endif %}
-          | **Net cashflow** | **£{{ states(s ~ 'monthly_net_cashflow') }} / month** |
-          | Payback (with tariff inflation, degradation) | {{ states(s ~ 'payback') }} years |
-          | Simple payback | {{ state_attr(s ~ 'payback', 'simple_payback_years') }} years |
-          | Net gain over horizon | £{{ states(s ~ 'net_gain_over_horizon') }} |
-          | NPV | £{{ states(s ~ 'net_present_value') }} |
+          | **Net cashflow** | **£{{ states(ent('monthly_net_cashflow')) }} / month** |
+          | Payback (with tariff inflation, degradation) | {{ states(ent('payback')) }} years |
+          | Simple payback | {{ state_attr(ent('payback'), 'simple_payback_years') }} years |
+          | Net gain over horizon | £{{ states(ent('net_gain_over_horizon')) }} |
+          | NPV | £{{ states(ent('net_present_value')) }} |
 
-          *Model: {{ state_attr(s ~ 'annual_saving', 'strategy') }} strategy, load profile
-          {{ state_attr(s ~ 'annual_saving', 'profile') }}.*
+          *Model: {{ state_attr(ent('annual_saving'), 'strategy') }} strategy, load profile
+          {{ state_attr(ent('annual_saving'), 'profile') }}.*
       - type: markdown
         title: Month by month (baseline vs with kit)
         content: |
-          {% set m = state_attr('sensor.home_energy_twin_annual_saving', 'monthly') %}
+          {%- macro ent(sfx) -%}{%- set m = integration_entities('energy_twin') | select('match', 'sensor\\..*_' ~ sfx ~ '$') | list -%}{%- set c = 'sensor.home_energy_twin_' ~ sfx -%}{{ c if c in m else (m[0] if m else c) }}{%- endmacro -%}
+          {% set m = state_attr(ent('annual_saving'), 'monthly') %}
           {% if m %}
           | Month | Without | With | **Saved** |
           |---|--:|--:|--:|
@@ -564,7 +590,8 @@ views:
       - type: markdown
         title: What the heat pump does to your bills (per year)
         content: |
-          {% set s = 'sensor.home_energy_twin_annual_heat_pump_saving' %}
+          {%- macro ent(sfx) -%}{%- set m = integration_entities('energy_twin') | select('match', 'sensor\\..*_' ~ sfx ~ '$') | list -%}{%- set c = 'sensor.home_energy_twin_' ~ sfx -%}{{ c if c in m else (m[0] if m else c) }}{%- endmacro -%}
+          {% set s = ent('annual_heat_pump_saving') %}
           {% if state_attr(s, 'hp_electricity_kwh') is not none %}
           | | |
           |---|--:|
@@ -633,7 +660,8 @@ views:
       - type: markdown
         title: Ranked by saving per year
         content: |
-          {% set rows = state_attr('sensor.home_energy_twin_best_sweep_result', 'rows') %}
+          {%- macro ent(sfx) -%}{%- set m = integration_entities('energy_twin') | select('match', 'sensor\\..*_' ~ sfx ~ '$') | list -%}{%- set c = 'sensor.home_energy_twin_' ~ sfx -%}{{ c if c in m else (m[0] if m else c) }}{%- endmacro -%}
+          {% set rows = state_attr(ent('best_sweep_result'), 'rows') %}
           {% if rows %}
           | kWp | kWh | Inv kW | **Saving / year** | Last battery step | per extra kWh | Last array step | per extra kWp | Peak import |
           |--:|--:|--:|--:|--:|--:|--:|--:|--:|
@@ -672,7 +700,8 @@ views:
       - type: markdown
         title: Known events
         content: |
-          {% set ev = state_attr('sensor.home_energy_twin_next_power_event', 'events') %}
+          {%- macro ent(sfx) -%}{%- set m = integration_entities('energy_twin') | select('match', 'sensor\\..*_' ~ sfx ~ '$') | list -%}{%- set c = 'sensor.home_energy_twin_' ~ sfx -%}{{ c if c in m else (m[0] if m else c) }}{%- endmacro -%}
+          {% set ev = state_attr(ent('next_power_event'), 'events') %}
           {% if ev %}{% for e in ev -%}
           - **{{ e.kind }}** {{ as_timestamp(e.start) | timestamp_custom('%a %d %b %H:%M') }} → {{ as_timestamp(e.end) | timestamp_custom('%H:%M') }}
           {% endfor %}{% else %}None right now.{% endif %}
@@ -684,7 +713,8 @@ views:
     cards:
       - type: markdown
         content: |
-          {% set d = state_attr('sensor.home_energy_twin_diagnostics', 'diagnostics') %}
+          {%- macro ent(sfx) -%}{%- set m = integration_entities('energy_twin') | select('match', 'sensor\\..*_' ~ sfx ~ '$') | list -%}{%- set c = 'sensor.home_energy_twin_' ~ sfx -%}{{ c if c in m else (m[0] if m else c) }}{%- endmacro -%}
+          {% set d = state_attr(ent('diagnostics'), 'diagnostics') %}
           {% if d %}{% for k, v in d.items() -%}
           - **{{ k }}**: {{ v }}
           {% endfor %}{% endif %}
@@ -695,15 +725,17 @@ views:
       - type: markdown
         title: Vehicles (what the twin understood)
         content: |
-          {% set vs = state_attr('sensor.home_energy_twin_ev_charging_expected_tonight', 'vehicles') %}
+          {%- macro ent(sfx) -%}{%- set m = integration_entities('energy_twin') | select('match', 'sensor\\..*_' ~ sfx ~ '$') | list -%}{%- set c = 'sensor.home_energy_twin_' ~ sfx -%}{{ c if c in m else (m[0] if m else c) }}{%- endmacro -%}
+          {% set vs = state_attr(ent('ev_charging_expected_tonight'), 'vehicles') %}
           {% if vs %}
-          | Car | Mode | Found | Plugged | Home | SoC → target | Needs | Chance | Expected tonight | Learned session |
-          |---|---|---|---|---|--:|--:|--:|--:|--:|
+          | Car | Mode | Found | Plugged | Home | Battery → limit | Needs | Planned | Why |
+          |---|---|---|---|---|--:|--:|--:|---|
           {% for v in vs -%}
-          | **{{ v.vehicle }}** | {{ v.mode }} | {{ v.entities.keys() | list | join(', ') if v.entities else '—' }} | {{ v.plugged }} ({{ v.raw_plug_state }}) | {{ v.home }} ({{ v.raw_home_state }}) | {{ v.soc_pct if v.soc_pct is not none else '—' }} → {{ v.target_soc_pct }}% | {{ v.needed_kwh }} kWh | {{ (v.probability * 100) | round(0) }}% | {{ v.expected_kwh_tonight }} kWh | {{ v.session_kwh_learned }} kWh ({{ v.learned_sessions }} seen) |
+          | **{{ v.vehicle }}** | {{ v.mode }} | {{ v.entities.keys() | list | join(', ') if v.entities else '—' }} | {{ v.plugged }} ({{ v.raw_plug_state }}) | {{ v.home }} ({{ v.raw_home_state }}) | {{ v.soc_pct if v.soc_pct is not none else '—' }} → {{ v.target_soc_pct }}% | {{ v.needed_kwh if v.needed_kwh is not none else '?' }} kWh | {{ v.planned_kwh }} kWh | {{ v.why }} |
           {% endfor %}
-          *Plugged/Home show what was understood and, in brackets, the raw entity state. If a value is `None`, the state
-          wasn't recognised - set the override in the vehicle's options.*
+          *Cars are planned from their state right now - plugged in at home, battery level and charge limit - and re-planned
+          the moment that changes. A car left plugged in at its limit, or not plugged in, adds nothing to the plan.
+          If a value shows `None`, the state wasn't recognised - set the override in the vehicle's options.*
           {% else %}No vehicles configured - add them under Configure → Vehicles.{% endif %}
       - type: entities
         entities:

@@ -423,7 +423,7 @@
           "capacity_kwh": "Battery size (kWh)",
           "target_soc_pct": "Charge target (%)",
           "charger_kw": "Charger power (kW)",
-          "session_kwh": "Typical energy per charge (kWh)",
+          "session_kwh": "Energy per charge (kWh) - only without a battery level",
           "energy_stat": "Charging energy sensor (kWh) - override",
           "plug_states": "Plugged-in states (override)",
           "home_states": "At-home states (override)"
@@ -437,8 +437,8 @@
           "plug_entity": "Optional. A binary sensor, or a charging-status sensor - states like on/off, connected/disconnected, charging, stopped are understood.",
           "home_entity": "Optional. A device tracker / person / binary sensor. Any zone other than 'home' counts as away.",
           "soc_entity": "Optional. With it the twin knows exactly how much the car still needs.",
-          "session_kwh": "0 = learn it from observed sessions. Used when the car has no battery-level entity.",
-          "energy_stat": "Optional. Found automatically for a Tesla. Its history lets the twin learn this car's pattern straight away.",
+          "session_kwh": "Only used for a car that reports no battery level: how much it takes per charge. With a battery-level entity the car's own level and charge limit decide, so leave this at 0.",
+          "energy_stat": "Optional. Found automatically for a Tesla. Only used to take this car's charging out of your house-load history - nothing about the car's habits is learned.",
           "plug_states": "Only if your integration uses unusual wording. Comma-separated, e.g. 'ready,charging'. Blank = auto-detect.",
           "home_states": "Comma-separated, e.g. 'home,garage'. Blank = auto-detect."
         }
@@ -532,6 +532,18 @@
       },
       "grid_power": {
         "name": "Grid power"
+      },
+      "grid_import": {
+        "name": "Grid import"
+      },
+      "grid_export": {
+        "name": "Grid export"
+      },
+      "home_load": {
+        "name": "Home load (meter)"
+      },
+      "import_today": {
+        "name": "Imported today"
       },
       "solar_power": {
         "name": "Solar power"
@@ -758,6 +770,9 @@
       },
       "clear_events": {
         "name": "Clear manual events"
+      },
+      "use_live_rates": {
+        "name": "Use my live tariff rates"
       }
     }
   },
