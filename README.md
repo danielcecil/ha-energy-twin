@@ -34,14 +34,25 @@ runs a **virtual** battery and array alongside your house. It never controls har
 
 ## Matching your real usage
 
-Your Home Mini reports about every 20 s. The twin **integrates every reading for exactly as long as it was the current
-value**, so a kettle spike between its one-minute ticks is counted rather than missed. If you set *Home electricity
-consumption* (the Octopus *Current Total Consumption* sensor), the twin also **follows that meter**: Octopus backfills
-it from real half-hourly meter data, so whenever it changes the twin's *Home usage today*, real bill and with-kit bill
-are trued up to it (a daily reset and implausible jumps are handled). If your power sensor reads consistently high or
-low against the meter, a calibration factor is learned (shown in Diagnostics) and applied to the live load. The twin's
-load is your real meter **plus** any modelled heat pump / hob load; the *Right now* card shows every term so the
-numbers add up: load + modelled - solar +/- battery = grid.
+The live power sensor is an *estimate*; the meter is the truth. Pick any one Octopus consumption sensor (e.g. *Current
+Total Consumption*) as *Home electricity consumption* and the twin finds the others itself:
+
+* **Octopus Current Accumulative Consumption** (today) and **Previous Accumulative Consumption** (yesterday) carry a
+  `charges` attribute - the meter's own **half-hourly consumption**. Yesterday's is the data Octopus bills from, so it wins
+  over today's Home Mini figures for the same period.
+* **Live (today so far):** the twin integrates every Home Mini reading as it arrives (so spikes between its one-minute
+  ticks count) and is a stand-in until the meter data lands.
+* **The ledger self-corrects:** each completed half-hour is corrected to the meter's value, keeping the price-weighted
+  shape, for both your real bill and the twin's. It is idempotent - if Octopus revises a period later, the earlier
+  correction is replaced, not stacked - and periods the twin never saw (Home Assistant was off) are added at that
+  period's price. *Home usage today* therefore tracks Octopus; it only differs for the half-hour in progress.
+* **History and learning use the corrected data:** the meter's half-hourly values are kept (about a year) and replace
+  the recorder's statistics for the hours they cover when learning your usage profile; before that, statistics fill in.
+* **Calibration:** if the power sensor reads consistently high or low against the running total, a factor is learned
+  and applied to the live load (Diagnostics shows it).
+
+The twin's load is your real meter **plus** any modelled heat pump / hob load; the *Right now* card shows every term so
+the numbers add up: load + modelled - solar +/- battery = grid.
 
 ## Cars (EV charging)
 

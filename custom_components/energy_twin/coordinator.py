@@ -91,6 +91,13 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self._meter_prev: float | None = None                       # last reading of the Octopus consumption total
         self._meter_raw = 0.0                                       # kWh we integrated from raw power since that reading
         self._meter_led = 0.0                                       # ...and what we booked to the ledger meanwhile
+        self.slot_raw: dict[str, dict] = {}                         # raw ledger increments per half-hour (last ~4 days)
+        self.slot_applied: dict[str, dict] = {}                     # correction already applied per half-hour
+        self.official: dict[datetime, float] = {}                   # the meter's own half-hourly kWh (Octopus `charges`)
+        self.hh_history: dict[str, float] = {}                      # ...kept, to learn your usage from actual data
+        self.ledger_start: datetime | None = None
+        self._oct_cache: tuple = (0.0, "", {})
+        self._oct_today_kwh: float | None = None
         self._k_ema, self._k_n = 1.0, 0                             # meter / integrated-power ratio (calibration)
         self.learned_rates: dict[str, float] = {}                    # real cheap / standard / export p/kWh seen in those rates
         self.tank_kwh: float | None = None
@@ -241,6 +248,10 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.acc = {**self.acc, **saved.get("acc", {})}
         self.veh_rt = saved.get("veh_rt") or {}
         self.tank_kwh = saved.get("tank_kwh")
+        self.slot_raw = dict((saved.get("slots") or {}).get("raw") or {})
+        self.slot_applied = dict((saved.get("slots") or {}).get("applied") or {})
+        self.hh_history = {k: float(v) for k, v in (saved.get("hh") or {}).items()}
+        self.ledger_start = dt_util.parse_datetime(saved["ledger_start"]) if saved.get("ledger_start") else None
         if isinstance(saved.get("meter_k"), list) and len(saved["meter_k"]) == 2:
             self._k_ema, self._k_n = float(saved["meter_k"][0]), int(saved["meter_k"][1])
         self.learned_rates = {k: float(v) for k, v in (saved.get("learned_rates") or {}).items()}
@@ -263,6 +274,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "soc": self.soc, "last": self.last_tick.isoformat() if self.last_tick else None, "acc": self.acc,
             "veh_rt": self.veh_rt,
             "tank_kwh": self.tank_kwh, "learned_rates": self.learned_rates, "meter_k": [self._k_ema, self._k_n],
+            "slots": {"raw": self.slot_raw, "applied": self.slot_applied}, "hh": self.hh_history,
+            "ledger_start": self.ledger_start.isoformat() if self.ledger_start else None,
             "events": [{"kind": e.kind, "start": e.start.isoformat(), "end": e.end.isoformat(), "import_p": e.import_p,
                         "export_p": e.export_p, "bonus_p": e.bonus_p} for e in self.manual_events]}, 30)
 
@@ -318,6 +331,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.soc = self.start_soc()
         self.acc = {"day_key": "", "month_key": "", "day": _blank_bucket(), "month": _blank_bucket(),
                     "total": _blank_bucket()}
+        self.slot_raw, self.slot_applied, self.ledger_start = {}, {}, None
         self.plan_dirty = True
         self._save()
         await self.async_refresh()
@@ -454,6 +468,10 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "horizon_slots": len(starts), "live_price_entity": live_imp is not None,
             "live_pv_entity": live_pv is not None,
             "vehicles": self.ev_info,
+            "octopus_consumption": ({**self._octopus_ids(self.cfg.get(CONF_CONSUMPTION_STAT) or ""),
+                                     "official_half_hours": len(self.official),
+                                     "history_days": round(len(self.hh_history) / 48, 1)}
+                                    if "." in (self.cfg.get(CONF_CONSUMPTION_STAT) or "") else "no consumption sensor set"),
             "power_integration": ("every reading as it arrives" if self._integ else "sampled once a minute"),
             "meter": ({"entity": self.cfg.get(CONF_CONSUMPTION_STAT), "calibration_factor": round(self.meter_k, 3),
                        "calibration_samples": self._k_n} if self.cfg.get(CONF_CONSUMPTION_STAT) else "no consumption sensor set"),
@@ -567,36 +585,127 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         return k if (self._k_n >= 5 and abs(k - 1.0) > 0.02) else 1.0
 
     def _reconcile_meter(self, now: datetime, raw_kwh: float, led_kwh: float, imp_p: float, gated: bool) -> None:
-        """Follow the Octopus consumption total (backfilled from real half-hourly meter data) so the twin's usage
-        and bills match it, however the power sensor sampled between readings."""
+        """Learn whether the live power sensor reads consistently high/low against the Octopus running total.
+        (The ledger itself is corrected from the meter's half-hourly data - see _apply_corrections.)"""
         ent = (self.cfg.get(CONF_CONSUMPTION_STAT) or "").strip()
         if "." not in ent:
             return
-        m = ha_data.energy_kwh(self._state(ent))
+        ids = self._octopus_ids(ent)
+        m = ha_data.energy_kwh(self._state(ids.get("total") or ent))
         if m is None:
             return
         if gated:
             self._meter_raw += raw_kwh
-            self._meter_led += led_kwh
         prev, self._meter_prev = self._meter_prev, m
         if prev is None or m == prev:
             return
-        delta = m - prev if m >= prev else (m if m < 0.5 * prev else 0.0)        # a drop to ~0 is a daily reset
-        raw, led = self._meter_raw, self._meter_led
-        self._meter_raw = self._meter_led = 0.0
-        if not gated or not (0.0 < delta < 30.0) or delta > max(led, 0.2) * 8 + 2.0:
-            return                                                                # first reading after a gap / implausible
-        if raw >= 0.2 and delta >= 0.2 and 0.5 < delta / raw < 2.0:
+        delta = m - prev if m >= prev else 0.0
+        raw = self._meter_raw
+        self._meter_raw = 0.0
+        if gated and 0.2 <= delta < 30.0 and raw >= 0.2 and 0.5 < delta / raw < 2.0:
             r = delta / raw
             self._k_ema = r if self._k_n == 0 else 0.8 * self._k_ema + 0.2 * r
             self._k_n += 1
-        diff = delta - led                                                        # what we missed (or over-counted)
-        for b in (self.acc["day"], self.acc["month"], self.acc["total"]):
-            b["meter_kwh"] = b.get("meter_kwh", 0.0) + delta
-            b["trueup_kwh"] = b.get("trueup_kwh", 0.0) + diff
-            b["load_kwh"] += diff
-            b["actual_p"] += diff * imp_p                                         # the extra/less energy at today's price...
-            b["twin_p"] += diff * imp_p                                           # ...passes through the grid in the twin too
+
+    # ------------------------------------------------------------------ the meter's own half-hourly data
+    def _octopus_ids(self, ent: str) -> dict[str, str]:
+        ts, known, ids = self._oct_cache
+        now_m = time.monotonic()
+        if ent != known or now_m - ts > 600:
+            ids = ha_data.octopus_consumption_entities(self.hass, ent)
+            self._oct_cache = (now_m, ent, ids)
+        return ids
+
+    def _price_for(self, slot: datetime) -> float:
+        p = self._rate_cache["imp"].get(slot)
+        if p is not None:
+            return p
+        tar, loc = self.tariff(), slot.astimezone(self.tz)
+        if tar.in_cheap_window(loc.hour * 60 + loc.minute):
+            return self.learned_rates.get("cheap_p", tar.cheap_p)
+        return self.learned_rates.get("standard_p", tar.standard_p)
+
+    def _refresh_official(self) -> None:
+        """Read the meter's half-hourly consumption (`charges`). Yesterday's (the billing data) wins over today's
+        Home Mini data for the same period; both are kept as the authoritative history."""
+        ent = (self.cfg.get(CONF_CONSUMPTION_STAT) or "").strip()
+        if "." not in ent:
+            self.official = {}
+            return
+        ids = self._octopus_ids(ent)
+        today_state = self._state(ids.get("today"))
+        self._oct_today_kwh = ha_data.energy_kwh(today_state)
+        merged = {**ha_data.parse_charges(today_state), **ha_data.parse_charges(self._state(ids.get("previous")))}
+        if merged:
+            self.official = merged
+            for s_, v in merged.items():
+                self.hh_history[s_.isoformat()] = round(v, 4)
+            if len(self.hh_history) > 370 * 48:
+                for k in sorted(self.hh_history)[: len(self.hh_history) - 370 * 48]:
+                    del self.hh_history[k]
+
+    def _book_slot(self, now: datetime, load: float, actual_p: float, twin_p: float, price: float) -> None:
+        r = self.slot_raw.setdefault(floor_half_hour(now).isoformat(), {"load": 0.0, "actual_p": 0.0, "twin_p": 0.0,
+                                                                        "price": price})
+        r["load"] += load
+        r["actual_p"] += actual_p
+        r["twin_p"] += twin_p
+        r["price"] = price
+
+    def _apply_corrections(self, now: datetime) -> None:
+        """Make the ledger match the meter, half-hour by half-hour. Idempotent and self-correcting: if Octopus later
+        revises a period, the earlier correction is replaced, not stacked. Periods before the ledger began, and the
+        half-hour still in progress, are left alone."""
+        if not self.official:
+            return
+        cur = floor_half_hour(now)
+        day_key, month_key = self.acc.get("day_key"), self.acc.get("month_key")
+        for s_, e in self.official.items():
+            if s_ >= cur or (self.ledger_start and s_ < self.ledger_start):
+                continue
+            iso = s_.isoformat()
+            raw = self.slot_raw.get(iso) or {"load": 0.0, "actual_p": 0.0, "twin_p": 0.0, "price": self._price_for(s_)}
+            load = raw["load"]
+            if load > 0.01:                                           # keep the price-weighted shape, fix the size
+                f = min(5.0, max(0.2, e / load))
+                corr = {"load": e - load, "actual_p": raw["actual_p"] * (f - 1), "twin_p": raw["twin_p"] * (f - 1)}
+            else:                                                     # a period we didn't see (e.g. HA was down)
+                p = raw.get("price") or self._price_for(s_)
+                corr = {"load": e - load, "actual_p": e * p - raw["actual_p"], "twin_p": e * p - raw["twin_p"]}
+            applied = self.slot_applied.get(iso, {})
+            delta = {k: corr[k] - applied.get(k, 0.0) for k in corr}
+            if max(abs(v) for v in delta.values()) < 1e-9:
+                continue
+            loc = s_.astimezone(self.tz)
+            targets = [self.acc["total"]]
+            if loc.strftime("%Y-%m") == month_key:
+                targets.append(self.acc["month"])
+            if loc.strftime("%Y-%m-%d") == day_key:
+                targets.append(self.acc["day"])
+            for b in targets:
+                b["load_kwh"] += delta["load"]
+                b["actual_p"] += delta["actual_p"]
+                b["twin_p"] += delta["twin_p"]
+                b["trueup_kwh"] = b.get("trueup_kwh", 0.0) + delta["load"]
+            self.slot_applied[iso] = corr
+            self.slot_raw.setdefault(iso, raw)
+        cutoff = (now - timedelta(days=4)).isoformat()
+        for d in (self.slot_raw, self.slot_applied):
+            for k in [k for k in d if k < cutoff]:
+                del d[k]
+
+    def _merge_official_history(self, rows):
+        """Replace hours of the recorder's statistics with the meter's own half-hourly data where we have it."""
+        if not self.hh_history:
+            return rows
+        hours: dict[datetime, dict[int, float]] = {}
+        for iso, v in self.hh_history.items():
+            t_ = dt_util.parse_datetime(iso)
+            if t_ is not None:
+                hours.setdefault(t_.replace(minute=0, second=0, microsecond=0), {})[t_.minute] = v
+        base = dict(rows or [])
+        base.update({h: d[0] + d[30] for h, d in hours.items() if 0 in d and 30 in d})
+        return sorted(base.items())
 
     def _plan_index(self, now: datetime) -> int | None:
         if not self.plan:
@@ -701,6 +810,13 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
                                                     + (hp_p.gas_standing_p_day / 24.0 if hp_p.gas_disconnect else 0.0)) * h
                 b["grid_charge_kwh"] += max(0.0, r - max(0.0, -(house + ev - pv))) * h if r > 0 else 0.0
                 b["discharge_kwh"] += -r * h if r < 0 else 0.0
+        if self.ledger_start is None:
+            self.ledger_start = floor_half_hour(now)
+        if 0 < dt_s <= MAX_GAP_S:
+            self._book_slot(now, (real_house + ev) * (dt_s / 3600.0), actual_per_h * (dt_s / 3600.0),
+                            cost_p / SLOT_H * (dt_s / 3600.0), imp_p)
+        self._refresh_official()
+        self._apply_corrections(now)
         gated_ok = 0 < dt_s <= MAX_GAP_S
         raw_kwh = (raw_total * h) if (raw_total is not None and gated_ok) else 0.0
         self._reconcile_meter(now, raw_kwh, (real_house + ev) * h if gated_ok else 0.0, imp_p, gated_ok)
@@ -745,6 +861,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "live": live,
             "scenario": {"name": self.entry.title, "battery_kwh": hw.battery_kwh, "pv_kwp": hw.pv_kwp,
                          "inverter_kw": hw.inverter_kw, "strategy": self.cfg[CONF_STRATEGY]},
+            "octopus": {"today_kwh": self._oct_today_kwh, "official_half_hours": len(self.official)},
             "meter": {"calibration_factor": round(self.meter_k, 3), "calibration_samples": self._k_n,
                       "entity": self.cfg.get(CONF_CONSUMPTION_STAT) or None},
             "ev": {"tonight_kwh": round(sum(n.get("expected_kwh_tonight", 0) for n in (self.ev_info or [])), 1),
@@ -827,7 +944,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         ids, days = ([stat] if stat else []) + ev_ids, int(c[CONF_HISTORY_DAYS])
         rows = await ha_data.cached(self.hass, ("hist", tuple(ids), days), 3600,
                                     lambda: ha_data.history_hourly(self.hass, ids, days))
-        total = rows.get(stat) if stat else None
+        total = self._merge_official_history(rows.get(stat) if stat else None)
         ev_rows = None
         if ev_ids:
             merged: dict[datetime, float] = {}

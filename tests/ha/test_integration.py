@@ -1,4 +1,4 @@
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -953,69 +953,6 @@ async def test_load_between_ticks_is_integrated_not_sampled(hass: HomeAssistant)
     assert c.diag.get("power_integration") == "every reading as it arrives"
 
 
-async def test_usage_follows_the_octopus_meter(hass: HomeAssistant):
-    hass.states.async_set("sensor.meter", "5000.0", {"unit_of_measurement": "kWh"})
-    entry = await _setup(hass, strategy="rules", pv_now_entity=None, consumption_stat="sensor.meter")
-    c = entry.runtime_data
-    hw = c.hardware()
-    idx = c._plan_index(dt_util.utcnow())
-    t = dt_util.utcnow()
-    hass.states.async_set("sensor.mini", "600", {"unit_of_measurement": "W"})         # a steady 0.6 kW
-    c.feed_power("sensor.mini", hass.states.get("sensor.mini"), t)
-    c._roll_buckets(t)
-    c.acc["day"] = {**c.acc["day"], "load_kwh": 0.0, "actual_p": 0.0, "twin_p": 0.0, "meter_kwh": 0.0, "trueup_kwh": 0.0}
-    c.last_tick = t
-    c._meter_prev = None
-    c._step(t + timedelta(seconds=1), hw, idx)                                       # first reading: remembered only
-    price = c._live["import_p"]
-    for k in range(1, 7):                                                            # 6 minutes: we integrate 0.06 kWh
-        c._step(t + timedelta(minutes=k), hw, idx)
-    ledger_before = c.acc["day"]["load_kwh"]
-    assert ledger_before == pytest.approx(0.6 * 6 / 60, abs=0.01)
-    # Octopus reports 0.10 kWh in that time (the real meter saw peaks our sensor didn't): the ledger follows it
-    hass.states.async_set("sensor.meter", "5000.1", {"unit_of_measurement": "kWh"})
-    c._step(t + timedelta(minutes=7), hw, idx)
-    d = c.acc["day"]
-    assert d["meter_kwh"] == pytest.approx(0.1, abs=1e-6)
-    assert d["load_kwh"] == pytest.approx(0.1 + 0.6 / 60, abs=0.012)                  # = meter energy + the minute since
-    assert d["trueup_kwh"] == pytest.approx(0.1 - 0.07, abs=0.006)               # meter 0.10 vs the 0.07 we had booked (7 min)
-    # the corrected energy is priced into both the real bill and the twin's bill (savings are unaffected)
-    assert d["actual_p"] > 0 and d["twin_p"] > 0
-    usage = hass.states.get("sensor.home_energy_twin_home_usage_today")
-    c.async_set_updated_data(c._snapshot(t, hw, c._live))
-    await hass.async_block_till_done()
-    usage = hass.states.get("sensor.home_energy_twin_home_usage_today")
-    assert float(usage.state) == pytest.approx(d["load_kwh"], abs=0.001)
-    assert usage.attributes["octopus_meter_kwh_today"] == pytest.approx(0.1, abs=1e-3)
-
-
-async def test_meter_edge_cases_are_ignored_safely(hass: HomeAssistant):
-    hass.states.async_set("sensor.meter", "100000", {"unit_of_measurement": "Wh"})      # Wh is converted: 100 kWh
-    entry = await _setup(hass, strategy="rules", pv_now_entity=None, consumption_stat="sensor.meter")
-    c = entry.runtime_data
-    hw = c.hardware()
-    idx = c._plan_index(dt_util.utcnow())
-    t = dt_util.utcnow()
-    c.feed_power("sensor.mini", hass.states.get("sensor.mini"), t)
-    c.last_tick = t
-    c._step(t + timedelta(seconds=1), hw, idx)
-    for k in range(1, 4):
-        c._step(t + timedelta(minutes=k), hw, idx)
-    base = dict(c.acc["day"])
-    hass.states.async_set("sensor.meter", "160000", {"unit_of_measurement": "Wh"})       # +60 kWh in minutes: implausible
-    c._step(t + timedelta(minutes=5), hw, idx)
-    assert c.acc["day"]["meter_kwh"] == base["meter_kwh"]                                 # ignored, nothing booked
-    hass.states.async_set("sensor.meter", "0.2", {"unit_of_measurement": "kWh"})          # a daily reset to ~0
-    c._step(t + timedelta(minutes=6), hw, idx)
-    assert c.acc["day"]["meter_kwh"] == pytest.approx(base["meter_kwh"] + 0.2, abs=1e-6)  # a drop to ~0 is a daily reset: 0.2 kWh since
-    hass.states.async_set("sensor.meter", "0.25", {"unit_of_measurement": "kWh"})
-    c._step(t + timedelta(minutes=7), hw, idx)
-    assert c.acc["day"]["meter_kwh"] == pytest.approx(base["meter_kwh"] + 0.25, abs=1e-6)  # normal increments resume
-    # no consumption sensor set: nothing happens
-    other = await _setup(hass, title="NoMeter", strategy="rules")
-    assert other.runtime_data.diag.get("meter") == "no consumption sensor set"
-
-
 async def test_power_sensor_that_reads_consistently_high_is_calibrated(hass: HomeAssistant):
     hass.states.async_set("sensor.meter", "10.0", {"unit_of_measurement": "kWh"})
     entry = await _setup(hass, strategy="rules", pv_now_entity=None, consumption_stat="sensor.meter")
@@ -1068,3 +1005,127 @@ async def test_numbers_stack_up_with_modelled_heat_pump_load(hass: HomeAssistant
                 if v["path"] == "live" for x in v["cards"] if x.get("title") == "Right now - how the numbers add up")
     out = Template(card["content"], hass).async_render()
     assert "Heat pump & hob (modelled" in out and "Grid with the kit" in out
+
+
+TOTAL = "sensor.octopus_energy_electricity_21e5087858_1012451233311_current_total_consumption"
+TODAY = TOTAL.replace("current_total_consumption", "current_accumulative_consumption")
+PREV = TOTAL.replace("current_total_consumption", "previous_accumulative_consumption")
+
+
+def _charges(slots):
+    """[(start_utc, kwh)] -> the Octopus `charges` attribute."""
+    return [{"start": s_.isoformat(), "end": (s_ + timedelta(minutes=30)).isoformat(), "consumption": v} for s_, v in slots]
+
+
+async def _octopus_setup(hass, **extra):
+    hass.states.async_set(TOTAL, "5000.0", {"unit_of_measurement": "kWh"})
+    hass.states.async_set(TODAY, "0.0", {"unit_of_measurement": "kWh", "charges": []})
+    hass.states.async_set(PREV, "0.0", {"unit_of_measurement": "kWh", "charges": []})
+    return await _setup(hass, strategy="rules", pv_now_entity=None, consumption_stat=TOTAL, **extra)
+
+
+async def test_octopus_consumption_entities_are_found_from_any_one_of_them(hass: HomeAssistant):
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+    from custom_components.energy_twin import ha_data
+    # 1) by the naming pattern alone
+    hass.states.async_set(TOTAL, "1", {})
+    hass.states.async_set(TODAY, "1", {})
+    hass.states.async_set(PREV, "1", {})
+    assert ha_data.octopus_consumption_entities(hass, TOTAL) == {"total": TOTAL, "today": TODAY, "previous": PREV}
+    assert ha_data.octopus_consumption_entities(hass, TODAY)["previous"] == PREV
+    # 2) through the device registry (the real thing), ignoring the cost / off-peak variants
+    ce = MockConfigEntry(domain="octopus_energy")
+    ce.add_to_hass(hass)
+    dev = dr.async_get(hass).async_get_or_create(config_entry_id=ce.entry_id, identifiers={("octopus_energy", "meter")})
+    reg = er.async_get(hass)
+    ids = {}
+    for key in ("current_total_consumption", "current_accumulative_consumption", "previous_accumulative_consumption",
+                "current_accumulative_consumption_off_peak", "current_accumulative_cost"):
+        ids[key] = reg.async_get_or_create("sensor", "octopus_energy", f"octopus_energy_electricity_X_Y_{key}", config_entry=ce,
+                                           device_id=dev.id, suggested_object_id=f"x_{key}").entity_id
+    got = ha_data.octopus_consumption_entities(hass, ids["current_total_consumption"])
+    assert got == {"total": ids["current_total_consumption"], "today": ids["current_accumulative_consumption"],
+                   "previous": ids["previous_accumulative_consumption"]}
+    # charges parsing: ignores junk, floors to the half hour
+    t = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+    st = type("S", (), {"attributes": {"charges": _charges([(t, 0.31), (t + timedelta(minutes=30), 0.4)]) + [{"x": 1}, "junk", {"start": "bad", "consumption": 1}]}})()
+    assert ha_data.parse_charges(st) == {t: 0.31, t + timedelta(minutes=30): 0.4}
+
+
+async def test_ledger_follows_the_meters_half_hourly_data_and_self_corrects(hass: HomeAssistant):
+    entry = await _octopus_setup(hass)
+    c = entry.runtime_data
+    now = dt_util.utcnow()
+    cur = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
+    c._roll_buckets(now)
+    c.ledger_start = cur - timedelta(hours=10)
+    c.acc["day"], c.acc["month"], c.acc["total"] = ({**b, "load_kwh": 0.0, "actual_p": 0.0, "twin_p": 0.0, "trueup_kwh": 0.0}
+                                                    for b in (c.acc["day"], c.acc["month"], c.acc["total"]))
+    s1, s2 = cur - timedelta(minutes=60), cur - timedelta(minutes=30)
+    for s_ in (s1, s2):                                    # two half-hours we integrated ourselves: 0.30 kWh each at 30 p
+        c.slot_raw[s_.isoformat()] = {"load": 0.30, "actual_p": 9.0, "twin_p": 6.0, "price": 30.0}
+    for b in (c.acc["day"], c.acc["month"], c.acc["total"]):
+        b["load_kwh"], b["actual_p"], b["twin_p"] = 0.60, 18.0, 12.0
+    day = lambda k: round(c.acc["day"][k], 4)  # noqa: E731
+    # Octopus's meter says 0.45 and 0.30: the ledger follows (and keeps the price-weighted shape)
+    hass.states.async_set(TODAY, "0.75", {"unit_of_measurement": "kWh", "charges": _charges([(s1, 0.45), (s2, 0.30)])})
+    c._refresh_official()
+    c._apply_corrections(now)
+    assert day("load_kwh") == pytest.approx(0.75) and day("actual_p") == pytest.approx(13.5 + 9.0) and day("twin_p") == pytest.approx(9.0 + 6.0)
+    assert c.acc["month"]["load_kwh"] == pytest.approx(0.75) and c.acc["total"]["load_kwh"] == pytest.approx(0.75)
+    # idempotent: reading the same data again changes nothing
+    c._refresh_official(); c._apply_corrections(now)
+    assert day("load_kwh") == pytest.approx(0.75) and day("actual_p") == pytest.approx(22.5)
+    # self-correcting: Octopus revises the first period; the old correction is replaced, not stacked
+    hass.states.async_set(TODAY, "0.65", {"unit_of_measurement": "kWh", "charges": _charges([(s1, 0.35), (s2, 0.30)])})
+    c._refresh_official(); c._apply_corrections(now)
+    assert day("load_kwh") == pytest.approx(0.65) and day("actual_p") == pytest.approx(10.5 + 9.0)
+    # the half-hour still in progress is never "corrected", and periods before the ledger began are ignored
+    hass.states.async_set(TODAY, "9", {"unit_of_measurement": "kWh", "charges": _charges(
+        [(s1, 0.35), (s2, 0.30), (cur, 9.0), (c.ledger_start - timedelta(minutes=60), 5.0)])})
+    c._refresh_official(); c._apply_corrections(now)
+    assert day("load_kwh") == pytest.approx(0.65)
+    # a period we never saw (HA was down) is added at that period's price, to the bill and the twin alike
+    gap = cur - timedelta(minutes=120)
+    c._rate_cache["imp"][gap] = 20.0
+    hass.states.async_set(TODAY, "1", {"unit_of_measurement": "kWh", "charges": _charges([(gap, 0.5), (s1, 0.35), (s2, 0.30)])})
+    c._refresh_official(); c._apply_corrections(now)
+    assert day("load_kwh") == pytest.approx(1.15) and day("actual_p") == pytest.approx(29.5) and day("twin_p") == pytest.approx(23.0)
+    # yesterday's official data (arrives the next morning) corrects month and total, not today
+    y = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    c.slot_raw[y.isoformat()] = {"load": 0.2, "actual_p": 6.0, "twin_p": 4.0, "price": 30.0}
+    c.ledger_start = y - timedelta(hours=1)
+    month_before, total_before, day_before = c.acc["month"]["load_kwh"], c.acc["total"]["load_kwh"], day("load_kwh")
+    hass.states.async_set(PREV, "0.5", {"unit_of_measurement": "kWh", "charges": _charges([(y, 0.5)])})
+    c._refresh_official(); c._apply_corrections(now)
+    assert day("load_kwh") == pytest.approx(day_before)
+    if y.astimezone(c.tz).strftime("%Y-%m") == c.acc["month_key"]:
+        assert c.acc["month"]["load_kwh"] == pytest.approx(month_before + 0.3)
+    assert c.acc["total"]["load_kwh"] == pytest.approx(total_before + 0.3)
+    # the usage sensor reports the corrected day, and Octopus's own figure alongside it
+    c.async_set_updated_data(c._snapshot(now, c.hardware(), c._live))
+    await hass.async_block_till_done()
+    u = hass.states.get("sensor.home_energy_twin_home_usage_today")
+    assert float(u.state) == pytest.approx(day("load_kwh"), abs=0.001)
+    assert u.attributes["octopus_today_kwh"] == pytest.approx(1.0) and u.attributes["official_half_hours"] >= 3
+    assert c.diag["octopus_consumption"]["today"] == TODAY and c.diag["octopus_consumption"]["previous"] == PREV
+
+
+async def test_history_is_learned_from_the_meters_own_data(hass: HomeAssistant):
+    entry = await _octopus_setup(hass)
+    c = entry.runtime_data
+    base = datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)
+    # statistics say 1.0 kWh/hour on one hour; the meter's half-hourly data says 0.4 + 0.5 = 0.9: the meter wins
+    rows = [(base, 1.0), (base + timedelta(hours=1), 1.0)]
+    c.hh_history = {base.isoformat(): 0.4, (base + timedelta(minutes=30)).isoformat(): 0.5}
+    merged = dict(c._merge_official_history(rows))
+    assert merged[base] == pytest.approx(0.9) and merged[base + timedelta(hours=1)] == 1.0          # other hours untouched
+    # with no recorder statistics at all, 20 days of the meter's data is enough to learn a profile
+    c.hh_history = {(base + timedelta(minutes=30 * i)).isoformat(): 0.3 for i in range(48 * 20)}
+    await c._async_load_history()
+    assert c.profile.source == "history" and c.profile.days >= 19
+    # and what it saw is kept for next time
+    c.slot_raw.clear()
+    hass.states.async_set(PREV, "9", {"unit_of_measurement": "kWh", "charges": _charges([(base, 0.77)])})
+    c._refresh_official()
+    assert c.hh_history[base.isoformat()] == pytest.approx(0.77)                                    # the corrected value replaces the old

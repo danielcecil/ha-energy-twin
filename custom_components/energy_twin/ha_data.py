@@ -418,3 +418,50 @@ class PowerIntegrator:
         avg = self.acc_kwh / span_h if span_h > 1e-6 else self.kw
         self.acc_kwh, self.t_tick = 0.0, now
         return avg
+
+
+def parse_charges(state: State | None) -> dict[datetime, float]:
+    """Octopus `charges` attribute -> {30-min UTC slot start: kWh}. These are the meter's own half-hourly readings
+    (the data used for your bill), so unlike our live sampling they never drift."""
+    out: dict[datetime, float] = {}
+    if state is None:
+        return out
+    for it in state.attributes.get("charges") or []:
+        if isinstance(it, dict):
+            t, v = _dt(it.get("start")), it.get("consumption")
+            if t is not None and v is not None:
+                try:
+                    out[floor_half_hour(t)] = float(v)
+                except (TypeError, ValueError):
+                    continue
+    return out
+
+
+_OCT_KEYS = (("current_accumulative_consumption", "today"), ("previous_accumulative_consumption", "previous"),
+             ("current_total_consumption", "total"))
+
+
+def octopus_consumption_entities(hass: HomeAssistant, entity_id: str | None) -> dict[str, str]:
+    """From any one Octopus consumption sensor, find its siblings: today's and yesterday's accumulative (which carry
+    the half-hourly `charges`) and the running total. Registry first (same device), then the naming pattern."""
+    from homeassistant.helpers import entity_registry as er
+
+    if not entity_id:
+        return {}
+    out: dict[str, str] = {}
+    reg = er.async_get(hass)
+    ent = reg.async_get(entity_id)
+    if ent is not None and ent.device_id:
+        for e in er.async_entries_for_device(reg, ent.device_id):
+            if e.domain != "sensor":
+                continue
+            for suffix, label in _OCT_KEYS:
+                if (e.unique_id or "").lower().endswith(suffix) or e.entity_id.endswith(suffix):
+                    out.setdefault(label, e.entity_id)
+    for suffix, label in _OCT_KEYS:                                   # naming pattern: ..._<suffix>
+        for known, _ in _OCT_KEYS:
+            if entity_id.endswith(known):
+                cand = entity_id[: -len(known)] + suffix
+                if label not in out and hass.states.get(cand) is not None:
+                    out[label] = cand
+    return out
