@@ -368,6 +368,7 @@ views:
         content: |
           {%- macro ent(sfx) -%}{%- set m = integration_entities('energy_twin') | select('match', 'sensor\\..*_' ~ sfx ~ '$') | list -%}{%- set c = 'sensor.home_energy_twin_' ~ sfx -%}{{ c if c in m else (m[0] if m else c) }}{%- endmacro -%}
           {% set load = states(ent('home_load_meter')) | float(0) %}
+          {% set mod = states(ent('modelled_extra_load')) | float(0) %}
           {% set sol = states(ent('solar_power')) | float(0) %}
           {% set bat = states(ent('battery_power')) | float(0) %}
           {% set imp = states(ent('grid_import')) | float(0) %}
@@ -375,13 +376,15 @@ views:
           | | kW |
           |---|--:|
           | **Your home, from the real meter** (house {{ state_attr(ent('home_load_meter'), 'house_kw') }} + car {{ state_attr(ent('home_load_meter'), 'car_kw') }}) | **{{ load }}** |
+          | + Heat pump & hob (modelled - not on your meter yet) | {{ mod }} |
           | − Solar (modelled) | {{ sol }} |
           | {{ '+ Battery charging' if bat >= 0 else '− Battery discharging' }} | {{ bat | abs }} |
-          | **= Grid with the kit** | **{{ ((load - sol + bat) | round(2)) }}** |
+          | **= Grid with the kit** | **{{ ((load + mod - sol + bat) | round(2)) }}** |
           | → Importing | {{ imp }} |
           | → Exporting | {{ exp }} |
 
           {{ states(ent('twin_mode')) }}.
+          The twin's load is your real meter **plus** any modelled heat pump / hob load (switched on under *Heat pump*).
           Grid import is **0 whenever the virtual battery or solar covers your load** - e.g. after the overnight charge
           the battery runs the house until its usable energy is used. The first row is what you really draw today.
       - type: grid
@@ -389,6 +392,7 @@ views:
         square: false
         cards:
           - {type: tile, entity: sensor.home_energy_twin_home_load_meter, name: Home load (real)}
+          - {type: tile, entity: sensor.home_energy_twin_modelled_extra_load, name: Heat pump + hob (modelled)}
           - {type: tile, entity: sensor.home_energy_twin_solar_power, name: Solar (modelled)}
           - {type: tile, entity: sensor.home_energy_twin_battery_power, name: Battery (+charge)}
           - {type: tile, entity: sensor.home_energy_twin_grid_import, name: Grid import}
@@ -405,6 +409,7 @@ views:
           - {entity: sensor.home_energy_twin_saving_total, name: Since twin started}
           - {entity: sensor.home_energy_twin_cost_today_actual, name: Today's real bill}
           - {entity: sensor.home_energy_twin_cost_today_twin, name: Today's bill with kit}
+          - {entity: sensor.home_energy_twin_home_usage_today, name: Home usage today (follows your Octopus meter)}
           - {entity: sensor.home_energy_twin_solar_generated_today, name: Solar generated today}
           - {entity: sensor.home_energy_twin_imported_today, name: Imported today (with the kit)}
           - {entity: sensor.home_energy_twin_exported_today, name: Exported today}

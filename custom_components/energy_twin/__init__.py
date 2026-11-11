@@ -6,7 +6,7 @@ import logging
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_state_change_event
@@ -99,6 +99,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TwinConfigEntry) -> bool
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _normalise_entity_ids(hass, entry)
     _replan_when_cars_change(hass, entry, coordinator)
+    _integrate_power(hass, entry, coordinator)
     entry.async_on_unload(entry.add_update_listener(_options_updated))
     return True
 
@@ -116,6 +117,20 @@ def _replan_when_cars_change(hass: HomeAssistant, entry: TwinConfigEntry, coordi
         await coordinator.async_request_refresh()
 
     entry.async_on_unload(async_track_state_change_event(hass, ids, _changed))
+
+
+def _integrate_power(hass: HomeAssistant, entry: TwinConfigEntry, coordinator: TwinCoordinator) -> None:
+    """Integrate the house power sensor on every reading, so spikes between our one-minute ticks are not missed."""
+    from .const import CONF_POWER_ENTITY
+    ent = coordinator.cfg.get(CONF_POWER_ENTITY)
+    if not ent:
+        return
+
+    @callback
+    def _reading(event) -> None:                      # synchronous: the reading is booked the instant it arrives
+        coordinator.feed_power(ent, event.data.get("new_state"), event.time_fired)
+
+    entry.async_on_unload(async_track_state_change_event(hass, [ent], _reading))
 
 
 CANONICAL_NAME = "Home Energy Twin"

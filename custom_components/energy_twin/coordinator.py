@@ -42,7 +42,8 @@ def _mins(v: str | int) -> int:
 
 def _blank_bucket() -> dict:
     return {"actual_p": 0.0, "twin_p": 0.0, "pv_kwh": 0.0, "export_kwh": 0.0, "grid_charge_kwh": 0.0,
-            "discharge_kwh": 0.0, "load_kwh": 0.0, "gas_p": 0.0, "hp_kwh": 0.0, "import_kwh": 0.0}
+            "discharge_kwh": 0.0, "load_kwh": 0.0, "gas_p": 0.0, "hp_kwh": 0.0, "import_kwh": 0.0,
+            "meter_kwh": 0.0, "trueup_kwh": 0.0}
 
 
 @dataclass
@@ -86,6 +87,11 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.gas_model = heatm.default_gas_model(heatm.HeatParams())
         self._rate_cache: dict[str, dict] = {"imp": {}, "exp": {}}   # last good Octopus rates, so a blank update can't reset prices
         self._rates_parsed = {"imp": 0, "exp": 0}
+        self._integ: dict[str, ha_data.PowerIntegrator] = {}        # exact integration of the power sensor's readings
+        self._meter_prev: float | None = None                       # last reading of the Octopus consumption total
+        self._meter_raw = 0.0                                       # kWh we integrated from raw power since that reading
+        self._meter_led = 0.0                                       # ...and what we booked to the ledger meanwhile
+        self._k_ema, self._k_n = 1.0, 0                             # meter / integrated-power ratio (calibration)
         self.learned_rates: dict[str, float] = {}                    # real cheap / standard / export p/kWh seen in those rates
         self.tank_kwh: float | None = None
         self.hp_plan: heatm.HeatResult | None = None
@@ -235,6 +241,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.acc = {**self.acc, **saved.get("acc", {})}
         self.veh_rt = saved.get("veh_rt") or {}
         self.tank_kwh = saved.get("tank_kwh")
+        if isinstance(saved.get("meter_k"), list) and len(saved["meter_k"]) == 2:
+            self._k_ema, self._k_n = float(saved["meter_k"][0]), int(saved["meter_k"][1])
         self.learned_rates = {k: float(v) for k, v in (saved.get("learned_rates") or {}).items()}
         for e in saved.get("events", []):
             try:
@@ -246,12 +254,15 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
                 self.manual_events.append(ev)
         if saved.get("last"):
             self.last_tick = dt_util.parse_datetime(saved["last"])
+        pw = self.cfg.get(CONF_POWER_ENTITY)
+        if pw and (st := self.hass.states.get(pw)) is not None:      # start integrating readings from the very first plan
+            self.feed_power(pw, st, dt_util.utcnow())
 
     def _save(self) -> None:
         self._store.async_delay_save(lambda: {
             "soc": self.soc, "last": self.last_tick.isoformat() if self.last_tick else None, "acc": self.acc,
             "veh_rt": self.veh_rt,
-            "tank_kwh": self.tank_kwh, "learned_rates": self.learned_rates,
+            "tank_kwh": self.tank_kwh, "learned_rates": self.learned_rates, "meter_k": [self._k_ema, self._k_n],
             "events": [{"kind": e.kind, "start": e.start.isoformat(), "end": e.end.isoformat(), "import_p": e.import_p,
                         "export_p": e.export_p, "bonus_p": e.bonus_p} for e in self.manual_events]}, 30)
 
@@ -443,6 +454,9 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "horizon_slots": len(starts), "live_price_entity": live_imp is not None,
             "live_pv_entity": live_pv is not None,
             "vehicles": self.ev_info,
+            "power_integration": ("every reading as it arrives" if self._integ else "sampled once a minute"),
+            "meter": ({"entity": self.cfg.get(CONF_CONSUMPTION_STAT), "calibration_factor": round(self.meter_k, 3),
+                       "calibration_samples": self._k_n} if self.cfg.get(CONF_CONSUMPTION_STAT) else "no consumption sensor set"),
             "battery_export_window": f"{c[CONF_EXPORT_FROM][:5]}-{c[CONF_EXPORT_UNTIL][:5]}"
                                      + (" (Power Down events may go outside it)" if c[CONF_EVENT_EXPORT] else ""),
             **self._fc_diag,
@@ -541,6 +555,49 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self.hp_plan = res
         return res.new_kw, list(res.new_kw)
 
+    # ------------------------------------------------------------------ exact load measurement
+    def feed_power(self, entity_id: str, state, when: datetime) -> None:
+        """Called on every state change of the power sensor (about every 20 s for a Home Mini)."""
+        self._integ.setdefault(entity_id, ha_data.PowerIntegrator()).feed(when, ha_data.power_kw(state))
+
+    @property
+    def meter_k(self) -> float:
+        """Correction for a power sensor that reads consistently high/low against the real (Octopus) meter."""
+        k = min(1.4, max(0.7, self._k_ema))
+        return k if (self._k_n >= 5 and abs(k - 1.0) > 0.02) else 1.0
+
+    def _reconcile_meter(self, now: datetime, raw_kwh: float, led_kwh: float, imp_p: float, gated: bool) -> None:
+        """Follow the Octopus consumption total (backfilled from real half-hourly meter data) so the twin's usage
+        and bills match it, however the power sensor sampled between readings."""
+        ent = (self.cfg.get(CONF_CONSUMPTION_STAT) or "").strip()
+        if "." not in ent:
+            return
+        m = ha_data.energy_kwh(self._state(ent))
+        if m is None:
+            return
+        if gated:
+            self._meter_raw += raw_kwh
+            self._meter_led += led_kwh
+        prev, self._meter_prev = self._meter_prev, m
+        if prev is None or m == prev:
+            return
+        delta = m - prev if m >= prev else (m if m < 0.5 * prev else 0.0)        # a drop to ~0 is a daily reset
+        raw, led = self._meter_raw, self._meter_led
+        self._meter_raw = self._meter_led = 0.0
+        if not gated or not (0.0 < delta < 30.0) or delta > max(led, 0.2) * 8 + 2.0:
+            return                                                                # first reading after a gap / implausible
+        if raw >= 0.2 and delta >= 0.2 and 0.5 < delta / raw < 2.0:
+            r = delta / raw
+            self._k_ema = r if self._k_n == 0 else 0.8 * self._k_ema + 0.2 * r
+            self._k_n += 1
+        diff = delta - led                                                        # what we missed (or over-counted)
+        for b in (self.acc["day"], self.acc["month"], self.acc["total"]):
+            b["meter_kwh"] = b.get("meter_kwh", 0.0) + delta
+            b["trueup_kwh"] = b.get("trueup_kwh", 0.0) + diff
+            b["load_kwh"] += diff
+            b["actual_p"] += diff * imp_p                                         # the extra/less energy at today's price...
+            b["twin_p"] += diff * imp_p                                           # ...passes through the grid in the twin too
+
     def _plan_index(self, now: datetime) -> int | None:
         if not self.plan:
             return None
@@ -570,7 +627,18 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
     def _step(self, now: datetime, hw: Hardware, idx: int) -> dict:
         c, sl, plan = self.cfg, self.plan.slots, self.plan.result
         pv_plan = pv_series(sl.pv_unit, hw)
-        total = ha_data.power_kw(self._state(c.get(CONF_POWER_ENTITY)))
+        pw_ent = c.get(CONF_POWER_ENTITY)
+        inst = ha_data.power_kw(self._state(pw_ent))
+        integ = self._integ.get(pw_ent)
+        raw_total = None
+        if inst is not None and integ is not None:
+            if integ.kw != inst:
+                integ.resync(now, inst)
+            avg = integ.take(now)
+            raw_total = avg if avg is not None else inst
+        elif inst is not None:
+            raw_total = inst
+        total = None if raw_total is None else raw_total * self.meter_k
         veh = self.vehicles
         ev_states = ([self.vehicle_info(v).live_kw for v in veh if v.power_entity] if veh else []) or \
                     [ha_data.power_kw(s) for s in self._states(c.get(CONF_EV_POWER_ENTITIES))]
@@ -633,6 +701,9 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
                                                     + (hp_p.gas_standing_p_day / 24.0 if hp_p.gas_disconnect else 0.0)) * h
                 b["grid_charge_kwh"] += max(0.0, r - max(0.0, -(house + ev - pv))) * h if r > 0 else 0.0
                 b["discharge_kwh"] += -r * h if r < 0 else 0.0
+        gated_ok = 0 < dt_s <= MAX_GAP_S
+        raw_kwh = (raw_total * h) if (raw_total is not None and gated_ok) else 0.0
+        self._reconcile_meter(now, raw_kwh, (real_house + ev) * h if gated_ok else 0.0, imp_p, gated_ok)
         mode = self._mode(sl.event[idx], r, grid, exp_kw, house + ev - pv, sl.cheap[idx])
         hpr = self.hp_plan
         if hp_p.enabled and hpr and idx != self._last_idx:      # a new half-hour: carry the tank state forward
@@ -641,7 +712,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         self._live = {"hp_kw": hpr.hp_kw[idx] if hpr else 0.0, "induction_kw": hpr.induction_kw[idx] if hpr else 0.0,
                       "tank_kwh": hpr.tank_end[idx] if hpr else None, "cop_space": hpr.cop_space[idx] if hpr else None,
                       "cop_dhw": hpr.cop_dhw[idx] if hpr else None, "tank_charging": bool(hpr and hpr.charging[idx]),
-                      "house": real_house, "ev": ev, "total": real_house + ev, "pv": pv, "battery": r, "grid": grid,
+                      "house": real_house, "ev": ev, "total": real_house + ev, "modelled": new, "pv": pv, "battery": r, "grid": grid,
                       "import": max(grid, 0.0), "export": exp_kw,
                       "import_p": imp_p, "export_p": exp_p, "mode": mode, "idx": idx, "soc_before": soc_before}
         return self._live
@@ -674,6 +745,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             "live": live,
             "scenario": {"name": self.entry.title, "battery_kwh": hw.battery_kwh, "pv_kwp": hw.pv_kwp,
                          "inverter_kw": hw.inverter_kw, "strategy": self.cfg[CONF_STRATEGY]},
+            "meter": {"calibration_factor": round(self.meter_k, 3), "calibration_samples": self._k_n,
+                      "entity": self.cfg.get(CONF_CONSUMPTION_STAT) or None},
             "ev": {"tonight_kwh": round(sum(n.get("expected_kwh_tonight", 0) for n in (self.ev_info or [])), 1),
                    "vehicles": self.ev_info or []},
             "soc_kwh": round(soc, 2),

@@ -377,3 +377,44 @@ def device_name(hass: HomeAssistant, device_id: str | None) -> str | None:
 
     dev = dr.async_get(hass).async_get(device_id) if device_id else None
     return (dev.name_by_user or dev.name) if dev else None
+
+
+class PowerIntegrator:
+    """Integrates a power reading *as it changes*, so a spike between two of our one-minute ticks still counts.
+
+    The Home Mini reports about every 20 s. Sampling the latest value once a minute can miss (or double-count) a
+    kettle spike; integrating each reading for exactly how long it was the current value is a step-function
+    integral of everything the sensor said, and `take()` returns the true average power over the tick.
+    """
+
+    def __init__(self) -> None:
+        self.kw: float | None = None
+        self.t_last: datetime | None = None
+        self.t_tick: datetime | None = None
+        self.acc_kwh = 0.0
+
+    def _advance(self, now: datetime) -> None:
+        if self.kw is not None and self.t_last is not None and now > self.t_last:
+            self.acc_kwh += self.kw * (now - self.t_last).total_seconds() / 3600.0
+        self.t_last = now
+
+    def feed(self, now: datetime, kw: float | None) -> None:
+        """A new reading (None = unavailable)."""
+        self._advance(now)
+        self.kw = kw
+        if self.t_tick is None:
+            self.t_tick = now
+
+    def resync(self, now: datetime, kw: float | None) -> None:
+        """The sensor's current value disagrees with ours (a reading was missed): start again from it."""
+        self.kw, self.t_last, self.t_tick, self.acc_kwh = kw, now, now, 0.0
+
+    def take(self, now: datetime) -> float | None:
+        """Average kW since the last take() (None if nothing has been seen yet or the sensor is unavailable)."""
+        if self.kw is None or self.t_tick is None:
+            return None
+        self._advance(now)
+        span_h = (now - self.t_tick).total_seconds() / 3600.0
+        avg = self.acc_kwh / span_h if span_h > 1e-6 else self.kw
+        self.acc_kwh, self.t_tick = 0.0, now
+        return avg

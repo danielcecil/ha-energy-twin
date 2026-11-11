@@ -147,7 +147,7 @@ def vsteps():
 
 ENT = {
  "sensor": {"soc": "Battery state of charge", "stored_energy": "Battery stored energy", "battery_power": "Battery power",
-   "grid_power": "Grid power", "grid_import": "Grid import", "grid_export": "Grid export", "home_load": "Home load (meter)", "import_today": "Imported today", "solar_power": "Solar power", "house_load": "House load", "mode": "Twin mode",
+   "grid_power": "Grid power", "grid_import": "Grid import", "grid_export": "Grid export", "home_load": "Home load (meter)", "modelled_load": "Modelled extra load", "import_today": "Imported today", "usage_today": "Home usage today", "solar_power": "Solar power", "house_load": "House load", "mode": "Twin mode",
    "import_price": "Import price", "export_price": "Export price", "saving_today": "Saving today",
    "saving_month": "Saving this month", "saving_total": "Saving total", "cost_today_actual": "Cost today (actual)",
    "cost_today_twin": "Cost today (twin)", "solar_today": "Solar generated today", "export_today": "Exported today",

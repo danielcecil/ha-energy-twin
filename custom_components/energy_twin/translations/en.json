@@ -542,8 +542,14 @@
       "home_load": {
         "name": "Home load (meter)"
       },
+      "modelled_load": {
+        "name": "Modelled extra load"
+      },
       "import_today": {
         "name": "Imported today"
+      },
+      "usage_today": {
+        "name": "Home usage today"
       },
       "solar_power": {
         "name": "Solar power"

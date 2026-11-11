@@ -931,3 +931,140 @@ async def test_price_is_the_live_sensor_reading_even_with_no_rate_lists(hass: Ho
         c._rate_cache["imp"][base.replace(hour=h)] = 6.69
     c._learn_rates(tariff)
     assert c.learned_rates["standard_p"] == pytest.approx(36.294) and c.learned_rates["cheap_p"] == pytest.approx(6.69)
+
+
+async def test_load_between_ticks_is_integrated_not_sampled(hass: HomeAssistant):
+    entry = await _setup(hass, strategy="rules", pv_now_entity=None)
+    c = entry.runtime_data
+    hw = c.hardware()
+    idx = c._plan_index(dt_util.utcnow())
+    t0 = dt_util.utcnow()
+    c.feed_power("sensor.mini", hass.states.get("sensor.mini"), t0)
+    c._step(t0, hw, idx)                                             # start a clean tick window
+    c._integ["sensor.mini"].feed(t0 + timedelta(seconds=0), 0.4)
+    for sec, kw in ((20, 6.0), (30, 0.4), (50, 0.4)):                # a 10 s kettle spike between ticks
+        c._integ["sensor.mini"].feed(t0 + timedelta(seconds=sec), kw)
+    hass.states.async_set("sensor.mini", "400", {"unit_of_measurement": "W"})
+    c._integ["sensor.mini"].kw = 0.4
+    c.last_tick = t0
+    c._step(t0 + timedelta(seconds=60), hw, idx)
+    exact = (0.4 * 20 + 6.0 * 10 + 0.4 * 30) / 60
+    assert c._live["house"] == pytest.approx(exact, abs=0.02) and c._live["house"] > 1.0   # not the 0.4 kW sample
+    assert c.diag.get("power_integration") == "every reading as it arrives"
+
+
+async def test_usage_follows_the_octopus_meter(hass: HomeAssistant):
+    hass.states.async_set("sensor.meter", "5000.0", {"unit_of_measurement": "kWh"})
+    entry = await _setup(hass, strategy="rules", pv_now_entity=None, consumption_stat="sensor.meter")
+    c = entry.runtime_data
+    hw = c.hardware()
+    idx = c._plan_index(dt_util.utcnow())
+    t = dt_util.utcnow()
+    hass.states.async_set("sensor.mini", "600", {"unit_of_measurement": "W"})         # a steady 0.6 kW
+    c.feed_power("sensor.mini", hass.states.get("sensor.mini"), t)
+    c._roll_buckets(t)
+    c.acc["day"] = {**c.acc["day"], "load_kwh": 0.0, "actual_p": 0.0, "twin_p": 0.0, "meter_kwh": 0.0, "trueup_kwh": 0.0}
+    c.last_tick = t
+    c._meter_prev = None
+    c._step(t + timedelta(seconds=1), hw, idx)                                       # first reading: remembered only
+    price = c._live["import_p"]
+    for k in range(1, 7):                                                            # 6 minutes: we integrate 0.06 kWh
+        c._step(t + timedelta(minutes=k), hw, idx)
+    ledger_before = c.acc["day"]["load_kwh"]
+    assert ledger_before == pytest.approx(0.6 * 6 / 60, abs=0.01)
+    # Octopus reports 0.10 kWh in that time (the real meter saw peaks our sensor didn't): the ledger follows it
+    hass.states.async_set("sensor.meter", "5000.1", {"unit_of_measurement": "kWh"})
+    c._step(t + timedelta(minutes=7), hw, idx)
+    d = c.acc["day"]
+    assert d["meter_kwh"] == pytest.approx(0.1, abs=1e-6)
+    assert d["load_kwh"] == pytest.approx(0.1 + 0.6 / 60, abs=0.012)                  # = meter energy + the minute since
+    assert d["trueup_kwh"] == pytest.approx(0.1 - 0.07, abs=0.006)               # meter 0.10 vs the 0.07 we had booked (7 min)
+    # the corrected energy is priced into both the real bill and the twin's bill (savings are unaffected)
+    assert d["actual_p"] > 0 and d["twin_p"] > 0
+    usage = hass.states.get("sensor.home_energy_twin_home_usage_today")
+    c.async_set_updated_data(c._snapshot(t, hw, c._live))
+    await hass.async_block_till_done()
+    usage = hass.states.get("sensor.home_energy_twin_home_usage_today")
+    assert float(usage.state) == pytest.approx(d["load_kwh"], abs=0.001)
+    assert usage.attributes["octopus_meter_kwh_today"] == pytest.approx(0.1, abs=1e-3)
+
+
+async def test_meter_edge_cases_are_ignored_safely(hass: HomeAssistant):
+    hass.states.async_set("sensor.meter", "100000", {"unit_of_measurement": "Wh"})      # Wh is converted: 100 kWh
+    entry = await _setup(hass, strategy="rules", pv_now_entity=None, consumption_stat="sensor.meter")
+    c = entry.runtime_data
+    hw = c.hardware()
+    idx = c._plan_index(dt_util.utcnow())
+    t = dt_util.utcnow()
+    c.feed_power("sensor.mini", hass.states.get("sensor.mini"), t)
+    c.last_tick = t
+    c._step(t + timedelta(seconds=1), hw, idx)
+    for k in range(1, 4):
+        c._step(t + timedelta(minutes=k), hw, idx)
+    base = dict(c.acc["day"])
+    hass.states.async_set("sensor.meter", "160000", {"unit_of_measurement": "Wh"})       # +60 kWh in minutes: implausible
+    c._step(t + timedelta(minutes=5), hw, idx)
+    assert c.acc["day"]["meter_kwh"] == base["meter_kwh"]                                 # ignored, nothing booked
+    hass.states.async_set("sensor.meter", "0.2", {"unit_of_measurement": "kWh"})          # a daily reset to ~0
+    c._step(t + timedelta(minutes=6), hw, idx)
+    assert c.acc["day"]["meter_kwh"] == pytest.approx(base["meter_kwh"] + 0.2, abs=1e-6)  # a drop to ~0 is a daily reset: 0.2 kWh since
+    hass.states.async_set("sensor.meter", "0.25", {"unit_of_measurement": "kWh"})
+    c._step(t + timedelta(minutes=7), hw, idx)
+    assert c.acc["day"]["meter_kwh"] == pytest.approx(base["meter_kwh"] + 0.25, abs=1e-6)  # normal increments resume
+    # no consumption sensor set: nothing happens
+    other = await _setup(hass, title="NoMeter", strategy="rules")
+    assert other.runtime_data.diag.get("meter") == "no consumption sensor set"
+
+
+async def test_power_sensor_that_reads_consistently_high_is_calibrated(hass: HomeAssistant):
+    hass.states.async_set("sensor.meter", "10.0", {"unit_of_measurement": "kWh"})
+    entry = await _setup(hass, strategy="rules", pv_now_entity=None, consumption_stat="sensor.meter")
+    c = entry.runtime_data
+    hw = c.hardware()
+    idx = c._plan_index(dt_util.utcnow())
+    t = dt_util.utcnow()
+    hass.states.async_set("sensor.mini", "1000", {"unit_of_measurement": "W"})            # sensor says 1.0 kW...
+    c.feed_power("sensor.mini", hass.states.get("sensor.mini"), t)
+    c.last_tick = t
+    c._meter_prev = None
+    c._step(t + timedelta(seconds=1), hw, idx)
+    now, meter = t, 10.0
+    for block in range(8):                                                                 # ...the real meter says 0.8 kW
+        for k in range(1, 31):
+            c._step(now + timedelta(minutes=k), hw, idx)
+        now += timedelta(minutes=30)
+        meter += 0.4                                                                       # 0.8 kW x 0.5 h
+        hass.states.async_set("sensor.meter", f"{meter:.3f}", {"unit_of_measurement": "kWh"})
+        c._step(now + timedelta(seconds=30), hw, idx)
+    assert c._k_n >= 5 and c.meter_k == pytest.approx(0.8, abs=0.06)
+    c._step(now + timedelta(minutes=2), hw, idx)
+    assert c._live["total"] == pytest.approx(0.8, abs=0.07)                                # the load now matches the meter
+    assert c._snapshot(now, hw, c._live)["meter"]["calibration_factor"] == pytest.approx(c.meter_k, abs=0.001)
+
+
+async def test_numbers_stack_up_with_modelled_heat_pump_load(hass: HomeAssistant):
+    """Regression: 0.40 load / 0.32 solar / -0.31 battery looked wrong because 0.23 kW of modelled heat pump load wasn't shown."""
+    import pathlib, yaml
+    from homeassistant.helpers.template import Template
+    entry = await _setup(hass, strategy="optimised", hp_enabled=True, pv_now_entity=None, forecast_ref_kwp=5.0)
+    c = entry.runtime_data
+    hw = c.hardware()
+    t = dt_util.utcnow()
+    idx = c._plan_index(t)
+    sl, res = c.plan.slots, c.plan.result
+    sl.cheap[idx], sl.tod_min[idx] = False, 12 * 60
+    sl.pv_unit[idx], sl.new_kw[idx] = 0.32 / 6.0, 0.23
+    c.soc, res.battery_kw[idx] = 0.5 * hw.emax, 0.0
+    hass.states.async_set("sensor.mini", "400", {"unit_of_measurement": "W"})
+    c.feed_power("sensor.mini", hass.states.get("sensor.mini"), t)
+    c.last_tick = t - timedelta(seconds=60)
+    c.async_set_updated_data(c._snapshot(t, hw, c._step(t, hw, idx)))
+    await hass.async_block_till_done()
+    g = lambda k: float(hass.states.get(f"sensor.home_energy_twin_{k}").state)  # noqa: E731
+    load, mod, sol, bat, net = g("home_load_meter"), g("modelled_extra_load"), g("solar_power"), g("battery_power"), g("grid_power")
+    assert mod == pytest.approx(0.23, abs=0.01) and bat < -0.2                  # the battery is covering modelled load
+    assert net == pytest.approx(load + mod - sol + bat, abs=0.01)               # ...and now every term is on screen
+    card = next(x for v in yaml.safe_load(pathlib.Path("dashboard/energy_twin_dashboard.yaml").read_text())["views"]
+                if v["path"] == "live" for x in v["cards"] if x.get("title") == "Right now - how the numbers add up")
+    out = Template(card["content"], hass).async_render()
+    assert "Heat pump & hob (modelled" in out and "Grid with the kit" in out

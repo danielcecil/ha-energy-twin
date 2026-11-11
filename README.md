@@ -32,6 +32,17 @@ runs a **virtual** battery and array alongside your house. It never controls har
 4. Dashboard: paste `dashboard/energy_twin_dashboard.yaml` into a new dashboard's raw editor. Charts
    need [apexcharts-card](https://github.com/RomRider/apexcharts-card) from HACS.
 
+## Matching your real usage
+
+Your Home Mini reports about every 20 s. The twin **integrates every reading for exactly as long as it was the current
+value**, so a kettle spike between its one-minute ticks is counted rather than missed. If you set *Home electricity
+consumption* (the Octopus *Current Total Consumption* sensor), the twin also **follows that meter**: Octopus backfills
+it from real half-hourly meter data, so whenever it changes the twin's *Home usage today*, real bill and with-kit bill
+are trued up to it (a daily reset and implausible jumps are handled). If your power sensor reads consistently high or
+low against the meter, a calibration factor is learned (shown in Diagnostics) and applied to the live load. The twin's
+load is your real meter **plus** any modelled heat pump / hob load; the *Right now* card shows every term so the
+numbers add up: load + modelled - solar +/- battery = grid.
+
 ## Cars (EV charging)
 
 Cars are modelled **individually**, not as an averaged nightly load. In *Configure -> Vehicles* add each car:
