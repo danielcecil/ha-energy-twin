@@ -50,6 +50,7 @@ F = {  # option key -> (label, help)
     "strategy": ("Strategy", ""), "margin_pct": ("Safety margin on evening demand (%)", ""),
     "export_from": ("Battery export window opens", "Battery power is only sent to the GRID inside this late-evening window - never overnight while the grid is cheap, which would just cycle the battery again. It still covers the house any time, and surplus solar still exports."),
     "export_until": ("Battery export window closes", "Normally when the cheap window starts (23:30)."),
+    "solar_battery_first": ("Solar fills the battery before exporting", "On (recommended): surplus solar charges the battery, up to its charge rate, before any goes to the grid - what a hybrid inverter does in normal self-consumption mode. Off lets the planner export solar while the battery still has room, which needs a feed-in-priority / time-of-use mode."),
     "event_export_anywhere": ("Power Down events can export outside that window", "Octopus Power Down events are paid, so they may override the window. Turn off to keep strictly to it."), "export_margin_p": ("Required export margin (p/kWh)", "Export only if it beats re-buying at the cheap rate by this much."),
     "arbitrage": ("Allow cheap-grid-to-export arbitrage", "Charge from the cheap window specifically to export later."),
     "allow_battery_export": ("Allow exporting from the battery", ""),
@@ -104,7 +105,7 @@ SEC = {
     "tariff": ("Tariff", "", ["cheap_start", "cheap_end", "cheap_p", "standard_p", "export_p", "power_up_import_p", "power_down_export_p", "power_down_bonus_p"]),
     "hardware": ("Solar & battery", "", ["pv_kwp", "inverter_kw", "pv_annual_yield", "battery_kwh", "battery_max_kw", "round_trip_eff", "reserve_pct", "export_limit_kw", "cycle_cost_p", "start_soc_pct"]),
     "finance": ("Costs & finance", "", ["system_cost", "grant", "finance_mode", "deposit", "finance_fee", "apr_pct", "term_months", "finance_monthly", "tariff_escalation_pct", "pv_degradation_pct", "battery_degradation_pct", "discount_rate_pct", "horizon_years"]),
-    "strategy": ("Strategy", "", ["strategy", "margin_pct", "export_from", "export_until", "event_export_anywhere", "export_margin_p", "arbitrage", "allow_battery_export"]),
+    "strategy": ("Strategy", "", ["strategy", "margin_pct", "export_from", "export_until", "event_export_anywhere", "solar_battery_first", "export_margin_p", "arbitrage", "allow_battery_export"]),
     "assumptions": ("Assumptions", "", ["night_base_load_kw", "default_daily_house_kwh", "default_daily_ev_kwh", "power_down_per_month", "power_down_start_hour", "power_down_hours", "power_up_per_month", "power_up_start_hour", "power_up_hours"]),
 }
 

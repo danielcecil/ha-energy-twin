@@ -200,6 +200,13 @@ def plan_dp(sl: Slots, hw: Hardware, st: Strategy, soc0: float, pv: list[float],
             bad |= chg > max(0.0, hw.import_limit_kw - max(0.0, D)) + 1e-6   # main fuse
         if not sl.cheap[t]:
             bad |= chg > max(0.0, -D) + 1e-6          # only solar may charge outside cheap slots
+        surplus = -D
+        if st.solar_battery_first and surplus > 0.05 and not (sl.event[t] and event_honoured(sl, st, t)):
+            # an inverter in self-consumption mode sends solar to the battery before the grid: the battery must take
+            # what it can (its charge rate, or the room it has left), within one power step of tolerance
+            step_kw = float(S[1] - S[0]) / (eta * DT) if N > 1 else 0.0
+            take = np.minimum(min(surplus, hw.charge_kw), (hw.emax - S) / (eta * DT))[:, None]
+            bad |= chg < take - step_kw - 1e-6
         if not export_allowed(sl, st, t):          # late-evening window only (Power Down events excepted)
             bad |= dis > max(0.0, house - pv[t]) + 1e-6
         tot = np.where(bad, big, cost) + V[None, :]

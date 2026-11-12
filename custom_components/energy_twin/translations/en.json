@@ -367,6 +367,7 @@
           "export_from": "Battery export window opens",
           "export_until": "Battery export window closes",
           "event_export_anywhere": "Power Down events can export outside that window",
+          "solar_battery_first": "Solar fills the battery before exporting",
           "export_margin_p": "Required export margin (p/kWh)",
           "arbitrage": "Allow cheap-grid-to-export arbitrage",
           "allow_battery_export": "Allow exporting from the battery"
@@ -375,6 +376,7 @@
           "export_from": "Battery power is only sent to the GRID inside this late-evening window - never overnight while the grid is cheap, which would just cycle the battery again. It still covers the house any time, and surplus solar still exports.",
           "export_until": "Normally when the cheap window starts (23:30).",
           "event_export_anywhere": "Octopus Power Down events are paid, so they may override the window. Turn off to keep strictly to it.",
+          "solar_battery_first": "On (recommended): surplus solar charges the battery, up to its charge rate, before any goes to the grid - what a hybrid inverter does in normal self-consumption mode. Off lets the planner export solar while the battery still has room, which needs a feed-in-priority / time-of-use mode.",
           "export_margin_p": "Export only if it beats re-buying at the cheap rate by this much.",
           "arbitrage": "Charge from the cheap window specifically to export later."
         }

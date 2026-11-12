@@ -54,6 +54,7 @@ class Strategy:
     export_from_min: int = 18 * 60    # battery export window opens (local) - late evening
     export_until_min: int = 23 * 60 + 30   # ...and closes (normally when the cheap window starts)
     event_export_anywhere: bool = True     # a Power Down event may export outside that window
+    solar_battery_first: bool = True       # solar surplus fills the battery (up to its charge rate) before any is exported
     export_margin_p: float = 1.0      # only export if it beats re-buying by this many pence
     arbitrage: bool = True            # allow charging from cheap grid purely to export
     allow_battery_export: bool = True

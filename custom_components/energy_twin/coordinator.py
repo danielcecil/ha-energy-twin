@@ -225,6 +225,7 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         c = cfg or self.cfg
         return Strategy(name=c[CONF_STRATEGY], margin_pct=c[CONF_MARGIN], export_from_min=_mins(c[CONF_EXPORT_FROM]),
                         export_until_min=_mins(c[CONF_EXPORT_UNTIL]), event_export_anywhere=bool(c[CONF_EVENT_EXPORT]),
+                        solar_battery_first=bool(c.get(CONF_SOLAR_FIRST, True)),
                         export_margin_p=c[CONF_EXPORT_MARGIN], arbitrage=c[CONF_ARBITRAGE],
                         allow_battery_export=c[CONF_BATT_EXPORT])
 

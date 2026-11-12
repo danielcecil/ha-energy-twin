@@ -200,3 +200,7 @@ pytest tests/sim          # pure-Python engine (fast)
 pytest tests/ha           # real Home Assistant: config flow, setup, entities, services
 python scripts/gen_translations.py   # after changing option labels
 ```
+
+### Solar before export
+
+"Solar fills the battery before exporting" (Strategy, default on) makes the planner send surplus solar to the battery, up to its charge rate or remaining room, before any goes to the grid. That is what a hybrid inverter does in normal self-consumption mode. Turn it off only if your inverter has a feed-in-priority / time-of-use mode and you want the planner to export solar while the battery still has room.
