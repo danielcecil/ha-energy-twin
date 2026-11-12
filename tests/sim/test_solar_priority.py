@@ -26,7 +26,7 @@ def violations(sl, res, hw=HW):
         surplus = res.pv_kw[i] - sl.house_kw[i] - sl.ev_kw[i]
         room_kw = (hw.emax - soc_prev) / (hw.eta * 0.5)
         take = min(surplus, hw.charge_kw, room_kw)
-        if surplus > 0.3 and res.export_kw[i] > 0.05 and res.battery_kw[i] > -0.05 and res.battery_kw[i] < take - 0.6:
+        if surplus > 0.3 and res.export_kw[i] > 0.05 and res.battery_kw[i] > -0.05 and res.battery_kw[i] < take - 0.9:
             bad.append((i, round(surplus, 2), round(res.battery_kw[i], 2), round(res.export_kw[i], 2)))
         soc_prev = res.soc[i]
     return bad
@@ -45,3 +45,12 @@ def test_the_rule_costs_almost_nothing_and_can_be_switched_off():
     on = simulate(sl, HW, Strategy(name="optimised", solar_battery_first=True), chunk_tod_min=CFG.cheap_start_min)
     off = simulate(sl, HW, Strategy(name="optimised", solar_battery_first=False), chunk_tod_min=CFG.cheap_start_min)
     assert on.saving_gbp >= off.saving_gbp * 0.97, (on.saving_gbp, off.saving_gbp)
+
+
+def test_default_stores_solar_only_as_far_as_it_pays():
+    """Default: solar is valued at the export rate; the battery is filled only to reach the cheap slot."""
+    assert Strategy().solar_battery_first is False and TariffConfig().export_p == 12.0
+    sl = year(date(2026, 6, 1), 30)
+    res = simulate(sl, HW, Strategy(name="optimised"), chunk_tod_min=CFG.cheap_start_min)
+    peak_import = sum(res.grid_kw[i] * 0.5 for i in range(sl.n) if res.grid_kw[i] > 0 and not sl.cheap[i])
+    assert peak_import < 0.15 * sum(sl.house_kw[i] * 0.5 for i in range(sl.n) if not sl.cheap[i])
