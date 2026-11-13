@@ -23,6 +23,7 @@ class Hardware:
     export_limit_kw: float = 3.68     # G98 single-phase default; G99 may allow more
     cycle_cost_p: float = 0.0         # optional wear cost per kWh discharged
     import_limit_kw: float = 0.0      # main-fuse limit on grid import (0 = unlimited)
+    charge_flat_out: bool = False     # battery can't be throttled: charges at full rate, then stops (e.g. Powerwall 3)
 
     @property
     def eta(self) -> float:

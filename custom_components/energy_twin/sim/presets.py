@@ -15,8 +15,8 @@ HARDWARE_PRESETS: dict[str, dict] = {
     "tesla_powerwall_3": {
         "label": "Tesla Powerwall 3 (13.5 kWh, integrated hybrid inverter)",
         "battery_kwh": 13.5, "battery_max_kw": 10.0, "inverter_kw": 10.0,
-        "round_trip_eff": 0.89, "reserve_pct": 10.0, "pv_kwp": 8.0,
-        "note": "Inverter is built in; PV input up to ~20 kW DC. Check your market's continuous kW rating.",
+        "round_trip_eff": 0.89, "reserve_pct": 10.0, "pv_kwp": 8.0, "charge_flat_out": True,
+        "note": "Charges at full rate then stops (no charge-rate setting found). Inverter is built in; PV input up to ~20 kW DC. Check your market's continuous kW rating.",
     },
     "sigenstor_5kw_8kwh": {
         "label": "SigenStor 5 kW hybrid + 8 kWh",

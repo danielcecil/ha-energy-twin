@@ -204,3 +204,7 @@ python scripts/gen_translations.py   # after changing option labels
 ### Surplus solar: store or export?
 
 By default the planner stores surplus solar only when that is worth more than exporting it: each exported kWh earns the export rate (default 12p), while a stored kWh is worth the import price it avoids later, so the battery is topped up from solar only as far as it needs to last until the next cheap slot. "Always charge the battery from surplus solar" forces battery-first instead, which is what a hybrid inverter does in plain self-consumption mode.
+
+### Battery charge shape
+
+"Battery charges flat out" (Solar & battery options) is for batteries whose charge rate can't be set, such as the Powerwall 3 preset: the cheap-window charge runs at full rate from the start, then stops. Off (default) spreads it evenly, which a SigenStor can do by setting its max charging limit. Cost and final charge are the same either way.

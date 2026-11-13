@@ -117,6 +117,7 @@ STEPS: dict[str, list[tuple[str, Any, bool]]] = {
         (CONF_EXPORT_LIMIT, _num(0, 50, 0.01, "kW"), True),
         (CONF_CYCLE_COST, _num(0, 50, 0.1, "p/kWh"), True),
         (CONF_START_SOC, _num(0, 100, 1, "%"), True),
+        (CONF_FLAT_OUT, _BOOL, False),
     ],
     "finance": [
         (CONF_SYSTEM_COST, _num(0, 200000, 100, "£"), True), (CONF_GRANT, _num(0, 50000, 100, "£"), True),

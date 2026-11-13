@@ -98,7 +98,8 @@
           "reserve_pct": "Reserve (%)",
           "export_limit_kw": "Export limit (kW)",
           "cycle_cost_p": "Wear cost (p per kWh discharged)",
-          "start_soc_pct": "Starting battery level (%)"
+          "start_soc_pct": "Starting battery level (%)",
+          "charge_flat_out": "Battery charges flat out"
         },
         "data_description": {
           "pv_kwp": "0 = no solar.",
@@ -108,7 +109,8 @@
           "reserve_pct": "Never discharged below this.",
           "export_limit_kw": "3.68 kW is the G98 single-phase default.",
           "cycle_cost_p": "Optional. Makes the planner avoid low-value cycling.",
-          "start_soc_pct": "Where the virtual battery starts on first run and after a reset. You can also set it any time from the dashboard or with the set_battery_level service."
+          "start_soc_pct": "Where the virtual battery starts on first run and after a reset. You can also set it any time from the dashboard or with the set_battery_level service.",
+          "charge_flat_out": "On for a battery whose charge rate can't be set (e.g. Powerwall 3): it charges at full rate from the start of the cheap window, then stops. Off: charge is spread evenly across the window (SigenStor can do this by setting its max charging limit)."
         }
       }
     },
@@ -318,7 +320,8 @@
           "reserve_pct": "Reserve (%)",
           "export_limit_kw": "Export limit (kW)",
           "cycle_cost_p": "Wear cost (p per kWh discharged)",
-          "start_soc_pct": "Starting battery level (%)"
+          "start_soc_pct": "Starting battery level (%)",
+          "charge_flat_out": "Battery charges flat out"
         },
         "data_description": {
           "pv_kwp": "0 = no solar.",
@@ -328,7 +331,8 @@
           "reserve_pct": "Never discharged below this.",
           "export_limit_kw": "3.68 kW is the G98 single-phase default.",
           "cycle_cost_p": "Optional. Makes the planner avoid low-value cycling.",
-          "start_soc_pct": "Where the virtual battery starts on first run and after a reset. You can also set it any time from the dashboard or with the set_battery_level service."
+          "start_soc_pct": "Where the virtual battery starts on first run and after a reset. You can also set it any time from the dashboard or with the set_battery_level service.",
+          "charge_flat_out": "On for a battery whose charge rate can't be set (e.g. Powerwall 3): it charges at full rate from the start of the cheap window, then stops. Off: charge is spread evenly across the window (SigenStor can do this by setting its max charging limit)."
         }
       },
       "finance": {

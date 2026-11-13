@@ -179,7 +179,8 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
         return Hardware(pv_kwp=c[CONF_PV_KWP], inverter_kw=c[CONF_INVERTER_KW], pv_annual_yield=c[CONF_PV_YIELD],
                         battery_kwh=c[CONF_BATT_KWH], battery_max_kw=c[CONF_BATT_KW], round_trip_eff=c[CONF_RTE],
                         reserve_pct=c[CONF_RESERVE], export_limit_kw=c[CONF_EXPORT_LIMIT],
-                        cycle_cost_p=c[CONF_CYCLE_COST], import_limit_kw=self.import_limit_kw(c))
+                        cycle_cost_p=c[CONF_CYCLE_COST], import_limit_kw=self.import_limit_kw(c),
+                        charge_flat_out=bool(c.get(CONF_FLAT_OUT, False)))
 
     def start_soc(self, hw: Hardware | None = None) -> float:
         """Where the virtual battery starts (first run, reset): the configured % of capacity, within its limits."""

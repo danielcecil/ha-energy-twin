@@ -54,3 +54,13 @@ def test_default_stores_solar_only_as_far_as_it_pays():
     res = simulate(sl, HW, Strategy(name="optimised"), chunk_tod_min=CFG.cheap_start_min)
     peak_import = sum(res.grid_kw[i] * 0.5 for i in range(sl.n) if res.grid_kw[i] > 0 and not sl.cheap[i])
     assert peak_import < 0.15 * sum(sl.house_kw[i] * 0.5 for i in range(sl.n) if not sl.cheap[i])
+
+
+def test_flat_out_charges_at_full_rate_then_stops_with_same_cost():
+    sl = year(date(2026, 1, 10), 3)
+    even = simulate(sl, HW, Strategy(name="optimised"), chunk_tod_min=CFG.cheap_start_min)
+    flat = simulate(sl, replace(HW, charge_flat_out=True), Strategy(name="optimised"), chunk_tod_min=CFG.cheap_start_min)
+    night = [i for i in range(sl.n) if sl.cheap[i]]
+    assert max(flat.battery_kw[i] for i in night) > max(even.battery_kw[i] for i in night) + 0.5
+    assert max(flat.battery_kw) <= HW.charge_kw + 1e-6
+    assert abs(flat.cost_total_p - even.cost_total_p) < 0.02 * abs(even.cost_total_p) + 50

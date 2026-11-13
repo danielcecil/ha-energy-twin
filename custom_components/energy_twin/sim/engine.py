@@ -218,18 +218,19 @@ def plan_dp(sl: Slots, hw: Hardware, st: Strategy, soc0: float, pv: list[float],
         j = int(pol[t, i])
         out.append(float(r[i, j]))
         i = j
-    return level_charging(out, sl)
+    return level_charging(out, sl, hw)
 
 
-def level_charging(r: list[float], sl: Slots) -> list[float]:
-    """Spread each cheap block's charge evenly (a straight line, not an arbitrary lumpy split).
+def level_charging(r: list[float], sl: Slots, hw: Hardware | None = None) -> list[float]:
+    """Shape each cheap block's charge. Slots in a block share one price, so every split costs the same.
 
-    Slots in a cheap block share one price, so every split costs the same; the DP just picks one
-    arbitrarily (and its power steps are quantised). Averaging over a run of non-discharging cheap
-    slots keeps total energy, cost and the final SoC identical, lowers peak grid draw and is
-    gentler on the battery. Intermediate SoC stays between the run's start and end values.
+    Default: spread it evenly (a straight line; lower peak draw, gentler on the battery) - what a
+    battery with a settable charge rate can do. With `hw.charge_flat_out` (a battery that can't be
+    throttled, e.g. Powerwall 3) the same energy is charged at full rate from the start of the block
+    until done, then stops. Total energy, cost and final SoC are identical either way.
     """
     out, n, i = list(r), len(r), 0
+    flat = bool(hw and hw.charge_flat_out)
     while i < n:
         if sl.cheap[i] and not sl.event[i] and r[i] > -1e-9:
             j = i
@@ -238,9 +239,18 @@ def level_charging(r: list[float], sl: Slots) -> list[float]:
                 j += 1
             seg = r[i:j + 1]
             if sum(1 for x in seg if x > 1e-6):                 # something is being charged
-                avg = sum(seg) / len(seg)
-                for k in range(i, j + 1):
-                    out[k] = avg
+                if flat:
+                    left = sum(seg)
+                    for k in range(i, j + 1):
+                        cap = hw.charge_kw
+                        if hw.import_limit_kw > 0:
+                            cap = min(cap, max(0.0, hw.import_limit_kw - sl.exp_house_kw[k] - sl.exp_ev_kw[k]))
+                        out[k] = min(cap, left)
+                        left -= out[k]
+                else:
+                    avg = sum(seg) / len(seg)
+                    for k in range(i, j + 1):
+                        out[k] = avg
             i = j + 1
         else:
             i += 1
