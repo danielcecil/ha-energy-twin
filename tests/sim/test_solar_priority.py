@@ -64,3 +64,12 @@ def test_flat_out_charges_at_full_rate_then_stops_with_same_cost():
     assert max(flat.battery_kw[i] for i in night) > max(even.battery_kw[i] for i in night) + 0.5
     assert max(flat.battery_kw) <= HW.charge_kw + 1e-6
     assert abs(flat.cost_total_p - even.cost_total_p) < 0.02 * abs(even.cost_total_p) + 50
+
+
+@pytest.mark.parametrize("name", ("optimised", "rules"))
+@pytest.mark.parametrize("flat", (False, True))
+def test_charging_never_exceeds_the_main_fuse_limit(name, flat):
+    sl = year(date(2026, 1, 10), 10)
+    hw = replace(HW, import_limit_kw=4.0, charge_flat_out=flat)
+    res = simulate(sl, hw, Strategy(name=name), chunk_tod_min=CFG.cheap_start_min)
+    assert max(res.grid_kw) <= 4.0 + 1e-6
