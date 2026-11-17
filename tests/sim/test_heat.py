@@ -97,3 +97,24 @@ def test_year_totals_are_plausible_and_mostly_cheap():
     assert 2500 < s["hp_electricity_kwh"] < 5500
     assert s["cheap_share_pct"] > 8                                  # tank is charged in the cheap window
     assert s["backup_electricity_kwh"] < 0.1 * s["hp_electricity_kwh"]
+
+
+def test_profile_learned_from_hourly_gas():
+    """Hot water and heating shapes come from the hourly gas history, and drive the half-hourly demand."""
+    from datetime import datetime, timedelta, timezone
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    rows, temps = [], {}
+    for d in range(120):
+        day = (start + timedelta(days=d)).date()
+        t = 3.0 if d < 60 else 19.0                      # 60 cold days, 60 warm days
+        temps[day] = t
+        for h in range(24):
+            dhw = 1.0 if h in (6, 7, 21) else 0.1
+            heat_ = 0.0 if t >= P.base_temp_c else (0.0 if h < 17 else 2.0)      # heating only in the evening
+            rows.append((start + timedelta(days=d, hours=h), dhw + heat_))
+    gm = heat.calibrate_profile(heat.default_gas_model(P), rows, temps, P, TZ)
+    assert gm.dhw_shape and gm.space_shape and gm.profile_days == (60, 60)
+    assert abs(sum(gm.dhw_shape) - 1) < 1e-9 and abs(sum(gm.space_shape) - 1) < 1e-9
+    assert gm.space_shape[2 * 19] > 10 * gm.space_shape[2 * 9]           # heating sits in the evening
+    assert gm.dhw_shape[2 * 7] > 3 * gm.dhw_shape[2 * 12]                # hot water peaks at 07:00
+    assert heat.calibrate_profile(heat.default_gas_model(P), rows[:48], temps, P, TZ).space_shape is None   # too little data

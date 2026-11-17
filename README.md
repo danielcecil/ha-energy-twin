@@ -208,3 +208,7 @@ By default the planner stores surplus solar only when that is worth more than ex
 ### Battery charge shape
 
 "Battery charges flat out" (Solar & battery options) is for batteries whose charge rate can't be set, such as the Powerwall 3 preset: the cheap-window charge runs at full rate from the start, then stops. Off (default) spreads it evenly, which a SigenStor can do by setting its max charging limit. Cost and final charge are the same either way.
+
+### Heat pump: learning your daily shape from gas history
+
+With a gas statistic and an outdoor-temperature statistic set, the twin fits daily gas = base + k x heating degree-days, and now also learns *when* you use it. Days with no heating need give the hot-water profile; cold days minus that baseline give the space-heating profile (hourly statistics, split into half-hours). Needs about a week of each kind of day; until then the built-in shapes are used. Diagnostics shows `gas_model: history+profile (...)` when this is active.

@@ -125,6 +125,9 @@ class GasModel:
     days: int = 0
     r2: float = 0.0
     source: str = "default"
+    dhw_shape: list | None = None     # 48 half-hour fractions of the day's hot-water draw, learned from your gas
+    space_shape: list | None = None   # 48 half-hour fractions of the day's space heating, learned from your gas
+    profile_days: tuple = (0, 0)      # (summer days, heating days) behind the shapes
 
 
 def default_gas_model(p: HeatParams) -> GasModel:
@@ -151,6 +154,43 @@ def calibrate(gas_daily: dict[date, float], temp_daily: dict[date, float], p: He
     if b <= 0 or a < 0.3 * p.cooking_gas_kwh_day:
         return default_gas_model(p)
     return GasModel(a, b, n, max(0.0, 1 - ss_res / ss_tot), "history")
+
+
+def _hour_to_slots(h24: list[float]) -> list[float]:
+    """24 hourly values -> 48 half-hour fractions summing to 1 (each hour split in two)."""
+    return _norm([h24[i // 2] for i in range(48)])
+
+
+def calibrate_profile(gm: GasModel, gas_hourly: list[tuple[datetime, float]], temp_daily: dict[date, float],
+                      p: HeatParams, tz: ZoneInfo, min_days: int = 7) -> GasModel:
+    """Learn the time-of-day shape of hot water and space heating from hourly gas history.
+
+    Days with no heating need (daily mean >= base temperature) show hot water + cooking only; their
+    average gas per hour of day is the hot-water shape (less the fixed cooking shape). On cold days,
+    what is left after that same baseline is space heating, and its average per hour is the heating shape.
+    """
+    by_day: dict[date, list[float]] = {}
+    for s, v in gas_hourly:
+        loc = s.astimezone(tz)
+        by_day.setdefault(loc.date(), [0.0] * 24)[loc.hour] += max(0.0, v)
+    full = {d: hrs for d, hrs in by_day.items() if d in temp_daily and sum(hrs) > 0 and sum(1 for x in hrs if x > 0) >= 12}
+    summer = [hrs for d, hrs in full.items() if temp_daily[d] >= p.base_temp_c]
+    cold = [hrs for d, hrs in full.items() if p.base_temp_c - temp_daily[d] >= 3.0]
+    dhw = space = None
+    base_h = None
+    if len(summer) >= min_days:
+        base_h = [sum(d[i] for d in summer) / len(summer) for i in range(24)]
+        cook = [p.cooking_gas_kwh_day * sum(COOK_SHAPE[2 * i:2 * i + 2]) for i in range(24)]
+        dhw = _hour_to_slots([max(0.02 * (sum(base_h) / 24), base_h[i] - cook[i]) for i in range(24)])
+    if base_h is not None and len(cold) >= min_days:
+        extra = [max(0.0, sum(d[i] - base_h[i] for d in cold) / len(cold)) for i in range(24)]
+        if sum(extra) > 0:
+            space = _hour_to_slots([e + 0.01 * (sum(extra) / 24) for e in extra])
+    if dhw is None and space is None:
+        return gm
+    return GasModel(gm.base_kwh_day, gm.k_per_degday, gm.days, gm.r2,
+                    gm.source + "+profile" if gm.source == "history" else gm.source, dhw, space,
+                    (len(summer), len(cold)))
 
 
 # --------------------------------------------------------------------------- the simulation
@@ -182,11 +222,18 @@ def simulate_heat(tod: list[int], cheap: list[bool], opp: list[bool], weekday: l
     z = lambda: [0.0] * n  # noqa: E731
     r = HeatResult(hp_kw=z(), induction_kw=z(), new_kw=z(), gas_kw=z(), tank_start=z(), tank_end=z(),
                    cop_space=z(), cop_dhw=z(), dhw_kw=z(), space_kw=z(), backup_kw=z(), charging=[False] * n)
+    shape_d = gm.dhw_shape or DHW_SHAPE
+    day_t: dict = {}
+    if gm.space_shape:                                   # daily heat need from the day's mean temperature
+        acc: dict = {}
+        for t_ in range(n):
+            acc.setdefault(day_key[t_], []).append(temps[t_])
+        day_t = {k: sum(v) / len(v) for k, v in acc.items()}
     for t in range(n):
         T, slot = temps[t], tod[t] // 30
         c_s, c_d = cop(T, p.flow_temp_c, p.carnot_frac), cop(T, p.tank_setpoint_c, p.carnot_frac)
         r.tank_start[t] = tank
-        draw = dhw_day * DHW_SHAPE[slot]
+        draw = dhw_day * shape_d[slot]
         tank -= draw + loss_slot * (tank / e_max if e_max > 0 else 0.0)
         short = 0.0
         if tank < 0:
@@ -205,7 +252,10 @@ def simulate_heat(tod: list[int], cheap: list[bool], opp: list[bool], weekday: l
             r.charging[t] = True
             if target > e_max + 1e-6 and tank >= target - 1e-6:
                 leg_day = day_key[t]
-        demand_kw = H * max(0.0, p.base_temp_c - T)
+        if gm.space_shape:
+            demand_kw = H * 24.0 * max(0.0, p.base_temp_c - day_t[day_key[t]]) * gm.space_shape[slot] / dt
+        else:
+            demand_kw = H * max(0.0, p.base_temp_c - T)
         need = demand_kw * dt + defer
         deliver = 0.0 if dhw_elec > 0 else min(need, capacity_kw(T, p.hp_capacity_kw) * dt)
         defer = need - deliver

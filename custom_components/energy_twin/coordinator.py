@@ -487,7 +487,9 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
             **self._fc_diag,
             "heat_pump": ({"gas_rate_p": round(hp.gas_unit_p, 2), "gas_standing_p_day": round(hp.gas_standing_p_day, 1),
                            "gas_rate_from": "sensor" if ha_data.price_p(self._state(c.get(CONF_GAS_RATE_ENTITY))) else "fixed number",
-                           "temps_from": self._temps_source, "gas_model": self.gas_model.source,
+                           "temps_from": self._temps_source, "gas_model": (self.gas_model.source + (f" ({self.gas_model.days} days, r2 {self.gas_model.r2:.2f}; daily shapes from "
+                                                                  f"{self.gas_model.profile_days[0]} summer + {self.gas_model.profile_days[1]} cold days)"
+                                                                  if self.gas_model.dhw_shape or self.gas_model.space_shape else "")),
                            "tank_kwh": round(self.tank_kwh or 0.0, 1)} if hp.enabled else "off"),
             "fuse_limit_kw": round(hw.import_limit_kw, 1),
         }
@@ -1001,8 +1003,13 @@ class TwinCoordinator(DataUpdateCoordinator[dict]):
                 acc.setdefault(d, []).append(v)
             return {d: (sum(v) / len(v) if mean else sum(v)) for d, v in acc.items() if (mean or len(v) >= 20)}
 
-        self.gas_model = await self.hass.async_add_executor_job(
-            heatm.calibrate, daily(g.get(gas, []), False), daily(t.get(tstat, []), True), hp)
+        tdaily = daily(t.get(tstat, []), True)
+
+        def fit():
+            gm = heatm.calibrate(daily(g.get(gas, []), False), tdaily, hp)
+            return heatm.calibrate_profile(gm, g.get(gas, []), tdaily, hp, self.tz)
+
+        self.gas_model = await self.hass.async_add_executor_job(fit)
 
     def _year(self, c: dict) -> Slots:
         hw, tariff = self.hardware(c), self.tariff(c)
